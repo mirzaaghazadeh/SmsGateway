@@ -34,7 +34,7 @@ All images are rendered from the OpenSCAD source in `source/`.
 | Case v6 | Designed and sliced, **not yet print-tested**. Some sizes are estimated from photos (see below) |
 | Wiring | Documented in [ASSEMBLY.md](ASSEMBLY.md) |
 | Firmware | Bench-test sketch for one ESP32-S3 + one SIM800L. Gateway firmware: work in progress |
-| Server | Work in progress, in `server/` |
+| Server | Working: web panel, HTTP API, webhooks, 19 passing tests. Not yet run against real hardware |
 
 ## Repository layout
 
@@ -133,17 +133,42 @@ prints PASS/FAIL with hints, then works as an AT terminal (`!sms +<number> text`
 
 ## Server
 
-Node.js 24+ server and web panel in `server/` (no npm dependencies, SQLite through `node:sqlite`).
+Node.js 24+ server and web panel in `server/`. No npm dependencies: Node's built-in `http`,
+`crypto` and `node:sqlite`, and a vanilla-JS panel with hand-made SVG charts.
 
 ```sh
 cd server
-npm start        # web panel on http://localhost:3000 (PORT to change)
+ADMIN_PASSWORD=change-me npm start   # web panel on http://localhost:3000
 npm test
 ```
 
-On first start it generates a panel password (printed in the console), a device key and an API
-key, and stores them in the SQLite database in `server/data/` (git-ignored). Set `ADMIN_PASSWORD`,
-`DEVICE_KEY`, `API_KEY`, `SESSION_SECRET`, `DATA_DIR` or `PORT` in the environment to choose your own.
+**Deploy with Docker** (e.g. Coolify): use `server/Dockerfile` (base directory `/server`, port
+3000) and mount a persistent volume at `/data` for the SQLite database.
+
+| Env var | |
+|---|---|
+| `ADMIN_PASSWORD` | panel login; if unset, one is generated and printed in the logs |
+| `DEVICE_KEY`, `API_KEY` | optional; generated and shown in the panel's Settings if unset |
+| `SESSION_SECRET` | optional |
+| `PORT`, `DATA_DIR` | default 3000 and `./data` (`/data` in Docker) |
+
+**Device protocol**: the ESP32 sends `POST /api/device/sync` with `Authorization: Bearer <DEVICE_KEY>`
+every few seconds, with device and SIM status plus events (incoming SMS as raw PDUs, missed calls,
+job results). The reply carries the jobs to run (outgoing SMS as ready-made PDUs, AT commands,
+restart). All SMS encoding and decoding (GSM-7 / UCS-2, multipart) happens on the server.
+
+**Public API** for other apps, `Authorization: Bearer <API_KEY>`:
+
+| | |
+|---|---|
+| `POST /api/v1/sms` | send: `{"to": "+15551234567", "text": "Hello", "sim": 0}` (`sim` 0 = any, 1, 2) |
+| `GET /api/v1/sms/:id` | status of one message |
+| `GET /api/v1/messages?direction=in&since_id=` | inbox / outbox |
+| `GET /api/v1/calls` | missed calls |
+| `GET /api/v1/status` | gateway and SIM status |
+
+**Webhooks** (URL set in the panel): `sms.received`, `sms.sent`, `sms.failed`, `call.missed`,
+`device.offline`, `device.online`, signed with HMAC-SHA256 in the `X-Gateway-Signature` header.
 
 ## Contributing
 
