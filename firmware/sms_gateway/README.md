@@ -114,6 +114,7 @@ short tests. Use the proper divider for 24/7 use.
 
 Useful serial commands:
 - `status`
+- `net` (checks DNS, TCP and HTTPS to the server one by one, when the server cannot be reached)
 - `at1 AT+CSQ` (any AT command, to SIM 1)
 - `debug1` (shows everything SIM 1 sends)
 - `setup`

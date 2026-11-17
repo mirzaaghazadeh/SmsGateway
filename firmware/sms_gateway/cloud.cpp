@@ -174,6 +174,11 @@ static bool sync() {
 
   String body;
   serializeJson(doc, body);
+  // The ESP32 core (3.0.x) forgets the CA bundle when a connection attempt fails, and every later
+  // handshake then fails with "CA chain required" (-30336). Attach it again before each new connection.
+  if (https && !settings.insecure && !tls.connected()) {
+    tls.setCACertBundle(x509_crt_bundle_start, x509_crt_bundle_end - x509_crt_bundle_start);
+  }
   bool begun = https ? http.begin(tls, url) : http.begin(plain, url);
   if (!begun) {
     err = "bad server address";

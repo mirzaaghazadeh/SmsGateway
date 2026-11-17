@@ -21,6 +21,7 @@
 */
 
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include "cloud.h"
 #include "config.h"
 #include "display.h"
@@ -89,9 +90,13 @@ static void startWifi() {
   Serial.printf("Wi-Fi: joining \"%s\"\n", settings.ssid.c_str());
 }
 
+// Joined the Wi-Fi AND got an address from the router. WiFi.isConnected() turns true a moment
+// before DHCP answers; a server sync in that moment fails its DNS lookup.
+static bool wifiUp() { return WiFi.isConnected() && WiFi.localIP() != IPAddress(0, 0, 0, 0); }
+
 static void watchWifi() {
   uint32_t now = millis();
-  if (WiFi.isConnected()) {
+  if (wifiUp()) {
     if (wifiLostSince) Serial.printf("Wi-Fi: connected, address %s\n", WiFi.localIP().toString().c_str());
     wifiLostSince = 0;
     if (!wifiOkSince) wifiOkSince = now;
@@ -149,15 +154,58 @@ static void printStatus() {
   Serial.printf("events waiting for the server: %u\n", (unsigned)events.size());
 }
 
+// "net": find out why the server cannot be reached, step by step (DNS, TCP, TLS).
+static void netCheck() {
+  String host = settings.server;
+  int p = host.indexOf("://");
+  if (p >= 0) host = host.substring(p + 3);
+  int slash = host.indexOf('/');
+  if (slash >= 0) host = host.substring(0, slash);
+  bool https = settings.server.startsWith("https://");
+  uint16_t port = https ? 443 : 80;
+  int colon = host.indexOf(':');
+  if (colon >= 0) {
+    port = host.substring(colon + 1).toInt();
+    host = host.substring(0, colon);
+  }
+  Serial.printf("net: Wi-Fi %s, IP %s, gateway %s, DNS %s\n", WiFi.isConnected() ? "up" : "DOWN", WiFi.localIP().toString().c_str(),
+                WiFi.gatewayIP().toString().c_str(), WiFi.dnsIP().toString().c_str());
+  IPAddress ip;
+  if (!WiFi.hostByName(host.c_str(), ip)) {
+    Serial.printf("net: DNS lookup of %s FAILED\n", host.c_str());
+    return;
+  }
+  Serial.printf("net: %s -> %s\n", host.c_str(), ip.toString().c_str());
+  WiFiClient tcp;
+  uint32_t t0 = millis();
+  bool ok = tcp.connect(ip, port, 8000);
+  Serial.printf("net: TCP %s:%u %s (%lu ms)\n", ip.toString().c_str(), port, ok ? "ok" : "FAILED", (unsigned long)(millis() - t0));
+  tcp.stop();
+  if (!ok || !https) return;
+  extern const uint8_t x509_crt_bundle_start[] asm("_binary_x509_crt_bundle_start");
+  extern const uint8_t x509_crt_bundle_end[] asm("_binary_x509_crt_bundle_end");
+  WiFiClientSecure tls;
+  if (settings.insecure) tls.setInsecure();
+  else tls.setCACertBundle(x509_crt_bundle_start, x509_crt_bundle_end - x509_crt_bundle_start);
+  t0 = millis();
+  ok = tls.connect(host.c_str(), port, 10000);
+  char err[120] = "";
+  if (!ok) tls.lastError(err, sizeof(err));
+  Serial.printf("net: TLS %s (%lu ms) %s, free heap %u\n", ok ? "ok" : "FAILED", (unsigned long)(millis() - t0), err, ESP.getFreeHeap());
+  tls.stop();
+}
+
 static void serialCommand(String cmd) {
   cmd.trim();
   if (!cmd.length()) return;
   String lower = cmd;
   lower.toLowerCase();
   if (lower == "help") {
-    Serial.println("status | at1 <cmd> | at2 <cmd> | debug1 | debug2 | setup | restart | factory-reset");
+    Serial.println("status | net | at1 <cmd> | at2 <cmd> | debug1 | debug2 | setup | restart | factory-reset");
   } else if (lower == "status") {
     printStatus();
+  } else if (lower == "net") {
+    netCheck();
   } else if (lower.startsWith("at1 ") || lower.startsWith("at2 ")) {
     Job j;
     j.type = Job::AT;
@@ -227,7 +275,7 @@ void loop() {
   portal::loop();
   if (settings.configured()) {
     watchWifi();
-    if (WiFi.isConnected()) cloud::loop();
+    if (wifiUp()) cloud::loop();
     if (cloud::setupRequested()) portal::start(true);
     if (cloud::rebootRequested()) {
       Serial.println("restart asked from the panel");

@@ -4,6 +4,14 @@ Versions are the gateway firmware versions (`FW_VERSION` in `firmware/sms_gatewa
 is a GitHub release tagged `vX.Y.Z` with the firmware files. Server changes ship with the version they
 were made for; the server deploys from `main`.
 
+## 1.1.1
+
+- Fix: a gateway could stay offline for good after one failed connection (for example right after
+  joining the Wi-Fi, or while the server restarts). The ESP32 core lost the certificate list after a
+  failed attempt; the gateway now attaches it again before every new connection.
+- The gateway waits for an address from the router before it talks to the server.
+- New serial command `net`: tests DNS, TCP and HTTPS to the server step by step.
+
 ## 1.1.0
 
 - Firmware updates over Wi-Fi: the server watches this repository's GitHub releases, downloads the
