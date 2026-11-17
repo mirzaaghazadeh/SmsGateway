@@ -50,8 +50,8 @@ SIM cards in one small box that stays plugged in at home and takes care of them:
 |---|---|
 | Case v6 | Designed and sliced, **not yet print-tested**. Some sizes are estimated from photos (see below) |
 | Wiring | Documented in [ASSEMBLY.md](ASSEMBLY.md) |
-| Firmware | Bench-test sketch for one ESP32-S3 + one SIM800L. Gateway firmware: work in progress |
-| Server | Working: web panel, HTTP API, webhooks, 19 passing tests. Not yet run against real hardware |
+| Firmware | Gateway firmware compiles (ESP32 core 3.0.7), **not yet run on hardware**. Bench-test sketch included |
+| Server | Web panel, HTTP API, webhooks, 19 passing tests. Not yet run against real hardware |
 
 ## Repository layout
 
@@ -59,8 +59,8 @@ SIM cards in one small box that stays plugged in at home and takes care of them:
 case/v6/            print files: STL + 3MF of every part, Bambu Studio projects, renders
 case/v6/bambu/      ready-to-print Bambu Studio plates + the process profile
 source/             OpenSCAD source of the case (sms_gateway_box_v6.scad)
-firmware/           Arduino sketches (sim800_test: bench test)
-server/             Node.js server and web panel
+firmware/           Arduino sketches: sms_gateway (the gateway), sim800_test (bench test)
+server/             Node.js server and web panel (Dockerfile for Coolify / Docker)
 ASSEMBLY.md         where every part sits, power and signal wiring, assembly order
 SHOPPING_LIST.md    parts list, antennas, power notes, SIM cards, 2G shutdowns
 ```
@@ -140,18 +140,33 @@ See [ASSEMBLY.md](ASSEMBLY.md) for the full tables. In short:
 
 ## Firmware
 
-`firmware/sim800_test/sim800_test.ino` tests one ESP32-S3 + one SIM800L on the bench before
-anything goes in the box: it checks UART, supply voltage, SIM, network registration and signal,
-prints PASS/FAIL with hints, then works as an AT terminal (`!sms +<number> text` sends a test SMS).
+### Gateway: `firmware/sms_gateway/`
 
-- Arduino IDE with the ESP32 core, board "ESP32S3 Dev Module".
-- Upload through the USB-C port marked COM, Serial Monitor at 115200 baud.
-- Wiring is in the comment at the top of the sketch.
+The program for the ESP32-S3 in the box. It runs both SIM800L modules, shows the status on the
+OLED and the RGB LED, and syncs with the server, which does all the SMS work.
+Full guide: [firmware/sms_gateway/README.md](firmware/sms_gateway/README.md).
+
+- Arduino IDE 2 with the "esp32" core by Espressif (tested with 3.0.7), plus the **ArduinoJson 7**
+  and **Adafruit SSD1306** libraries.
+- Board "ESP32S3 Dev Module", Flash 16MB, Partition "16M Flash (3MB APP/9.9MB FATFS)", PSRAM "OPI
+  PSRAM". Upload through the USB-C port marked COM.
+- **First setup**: the gateway opens a `SMS-Gateway-XXXX` hotspot (password `smsgateway`). Join it
+  with your phone, choose your Wi-Fi and paste the server address and device key from the panel
+  (Settings → Connect a gateway).
+- **Hold BOOT for 5 s** to erase the Wi-Fi and server settings and open the setup hotspot again.
+
+### Bench test: `firmware/sim800_test/`
+
+Tests one ESP32-S3 + one SIM800L before anything goes in the box: it checks UART, supply voltage,
+SIM, network registration and signal, prints PASS/FAIL with hints, then works as an AT terminal
+(`!sms +<number> text` sends a test SMS). Serial Monitor at 115200 baud; wiring is in the comment
+at the top of the sketch.
 
 ## Server
 
 Node.js 24+ server and web panel in `server/`. No npm dependencies: Node's built-in `http`,
 `crypto` and `node:sqlite`, and a vanilla-JS panel with hand-made SVG charts.
+Full guide (Coolify steps, API, webhooks, data retention): [server/README.md](server/README.md).
 
 ```sh
 cd server
@@ -189,8 +204,8 @@ restart). All SMS encoding and decoding (GSM-7 / UCS-2, multipart) happens on th
 
 ## Contributing
 
-Issues and pull requests are welcome, especially fit-test photos of the case, firmware for the
-gateway, and support for 4G modules (A7670 and similar) for countries without 2G.
+Issues and pull requests are welcome, especially fit-test photos of the case, reports from running
+the firmware on real hardware, and support for 4G modules (A7670 and similar) for countries without 2G.
 
 ## License
 

@@ -8,19 +8,30 @@ import { join } from 'node:path';
 import { decodePdu, pack7 } from '../src/pdu.js';
 import { gsm7Encode } from '../src/shared/gsm.js';
 
-const PORT = 3900 + Math.floor(Math.random() * 90);
-const BASE = `http://127.0.0.1:${PORT}`;
 const KEYS = { ADMIN_PASSWORD: 'admin-pass', DEVICE_KEY: 'dev-key', API_KEY: 'api-key' };
+let BASE;
 let proc, dir, cookie;
 let seq = 0;
 
 before(async () => {
   dir = mkdtempSync(join(tmpdir(), 'gw-test-'));
+  // port 0: the OS picks a free port, the server prints it
   proc = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'src/server.js'], {
-    env: { ...process.env, ...KEYS, PORT: String(PORT), DATA_DIR: dir },
+    env: { ...process.env, ...KEYS, PORT: '0', DATA_DIR: dir },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
-  await new Promise((resolve) => proc.stdout.on('data', (d) => String(d).includes('port') && resolve()));
+  const port = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('server did not start within 10 s')), 10_000);
+    proc.on('exit', (code) => reject(new Error(`server exited early (code ${code})`)));
+    proc.stdout.on('data', (d) => {
+      const m = /on port (\d+)/.exec(String(d));
+      if (m) {
+        clearTimeout(timer);
+        resolve(Number(m[1]));
+      }
+    });
+  });
+  BASE = `http://127.0.0.1:${port}`;
 });
 
 after(() => {

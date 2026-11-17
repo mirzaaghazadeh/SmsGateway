@@ -51,7 +51,7 @@ server.keepAliveTimeout = 65_000; // the ESP32 keeps its HTTPS connection open b
 server.headersTimeout = 70_000;
 
 server.listen(PORT, () => {
-  console.log(`SMS gateway server on port ${PORT}`);
+  console.log(`SMS gateway server on port ${server.address().port}`);
   if (!process.env.ADMIN_PASSWORD) {
     console.log(`ADMIN_PASSWORD is not set. Panel password: ${adminPassword()}  (set ADMIN_PASSWORD to choose your own)`);
   }
