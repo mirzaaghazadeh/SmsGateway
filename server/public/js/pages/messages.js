@@ -107,7 +107,7 @@ export default function messages(page, { params }) {
 }
 
 function compose(prefill, onSent) {
-  const to = h('input', { class: 'input mono', id: 'to', type: 'tel', inputmode: 'tel', autocomplete: 'off', placeholder: '+90 555 123 45 67', value: prefill, required: true });
+  const to = h('input', { class: 'input mono', id: 'to', type: 'tel', inputmode: 'tel', autocomplete: 'off', placeholder: '+1 555 123 4567', value: prefill, required: true });
   const sim = h('select', { class: 'select', id: 'sim' },
     h('option', { value: '0' }, 'Any ready SIM'),
     h('option', { value: '1' }, 'SIM 1'),

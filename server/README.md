@@ -71,7 +71,7 @@ Send `Authorization: Bearer <API_KEY>` with every call. The key is in the panel 
 
 | Call | |
 |---|---|
-| `POST /api/v1/sms` | Body `{"to": "+905551234567", "text": "...", "sim": 0}`. `sim`: 0 = any, 1, 2. Answers `201` with the message, status `queued`. |
+| `POST /api/v1/sms` | Body `{"to": "+15551234567", "text": "...", "sim": 0}`. `sim`: 0 = any, 1, 2. Answers `201` with the message, status `queued`. |
 | `GET /api/v1/sms/:id` | One message. `status` is `queued`, `sending`, `sent` or `failed` (with `error`). |
 | `GET /api/v1/messages?direction=in&since_id=0` | Received (`in`) or sent (`out`) messages. With `since_id` they come oldest first, so poll with the last id you saw. `limit` max 200. |
 | `GET /api/v1/calls?since_id=0` | Missed calls, same paging. |
@@ -80,7 +80,7 @@ Send `Authorization: Bearer <API_KEY>` with every call. The key is in the panel 
 ```bash
 curl -X POST https://sms.example.com/api/v1/sms \
   -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
-  -d '{"to": "+905551234567", "text": "Your code is 4321"}'
+  -d '{"to": "+15551234567", "text": "Your code is 4321"}'
 ```
 
 A text can be up to 10 SMS long:
@@ -97,7 +97,7 @@ Set a URL in Settings. The server POSTs JSON to it for each event:
 
 ```json
 { "event": "sms.received", "time": "2026-11-17T12:00:00.000Z",
-  "data": { "id": 42, "device": "f412fa6c81b4", "sim": 1, "from": "+905551234567", "text": "Hello", "parts": 1 } }
+  "data": { "id": 42, "device": "f412fa6c81b4", "sim": 1, "from": "+15551234567", "text": "Hello", "parts": 1 } }
 ```
 
 Each request carries `X-Gateway-Event` and `X-Gateway-Signature: sha256=<hex>`. The signature is the

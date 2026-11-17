@@ -1,12 +1,26 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, accessSync, constants } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 const dataDir = process.env.DATA_DIR || (process.env.NODE_ENV === 'production' ? '/data' : './data');
-mkdirSync(dataDir, { recursive: true });
 
-export const db = new DatabaseSync(process.env.DB_FILE || join(dataDir, 'gateway.db'));
+function openDatabase() {
+  try {
+    mkdirSync(dataDir, { recursive: true });
+    accessSync(dataDir, constants.W_OK);
+    return new DatabaseSync(process.env.DB_FILE || join(dataDir, 'gateway.db'));
+  } catch (e) {
+    console.error(
+      `Cannot write the database in ${dataDir} (${e.code || e.message}).\n` +
+        'The container runs as user "node" (uid 1000). Use a Docker volume for /data, or make the ' +
+        'mounted host folder writable for uid 1000 (chown 1000:1000 <folder>).'
+    );
+    process.exit(1);
+  }
+}
+
+export const db = openDatabase();
 
 db.exec(`
 PRAGMA journal_mode = WAL;

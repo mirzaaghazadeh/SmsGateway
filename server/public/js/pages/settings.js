@@ -77,7 +77,7 @@ function webhook(st, reload) {
       toast(r.ok ? `Test delivered (HTTP ${r.status})` : `Test failed: ${r.error}`, r.ok ? '' : 'bad');
     }),
   }, 'Send test');
-  const example = JSON.stringify({ event: 'sms.received', time: '2026-11-17T12:00:00.000Z', data: { id: 42, device: '…', sim: 1, from: '+905551234567', text: 'Hello', parts: 1 } }, null, 2);
+  const example = JSON.stringify({ event: 'sms.received', time: '2026-11-17T12:00:00.000Z', data: { id: 42, device: '…', sim: 1, from: '+15551234567', text: 'Hello', parts: 1 } }, null, 2);
   return panel('Webhook', null, h('div', { class: 'panel-body split even' },
     h('form', {
       class: 'form',
@@ -128,7 +128,7 @@ function apiPanel(st, reload) {
   const send = `curl -X POST ${base}/api/v1/sms \\
   -H "Authorization: Bearer ${st.api_key}" \\
   -H "Content-Type: application/json" \\
-  -d '{"to": "+905551234567", "text": "Your code is 4321", "sim": 0}'`;
+  -d '{"to": "+15551234567", "text": "Your code is 4321", "sim": 0}'`;
   const read = `curl "${base}/api/v1/messages?direction=in&since_id=0" \\
   -H "Authorization: Bearer ${st.api_key}"`;
   return panel('API', null, h('div', { class: 'panel-body split even' },
