@@ -5,6 +5,8 @@ import { HttpError } from './http.js';
 import { encodeSubmit, decodePdu, normalizeNumber } from './pdu.js';
 import { analyzeText } from './shared/gsm.js';
 import { emit } from './webhook.js';
+import { updateOffer } from './firmware.js';
+import { ledForDevice } from './led.js';
 
 export const ONLINE_MS = 30_000;
 const JOB_TIMEOUT_MS = 180_000;
@@ -94,6 +96,10 @@ export function handleSync(body, now = Date.now()) {
       id, str(body.name, 40) || 'SMS Gateway', str(body.fw, 20), str(wifi.ip, 40), str(wifi.ssid, 40),
       int(wifi.rssi), int(body.heap), int(body.uptime), boot, str(body.reset, 40), now, now
     );
+    if (dev?.fw && body.fw && dev.fw !== str(body.fw, 20)) {
+      log(`Firmware changed: ${dev.fw} -> ${body.fw}`, { device_id: id });
+      db.prepare('UPDATE devices SET fw_result = ? WHERE id = ?').run(`running ${str(body.fw, 20)}`, id);
+    }
 
     const prevSims = new Map(db.prepare('SELECT * FROM sims WHERE device_id = ?').all(id).map((s) => [s.slot, s]));
     for (const s of sims) {
@@ -138,7 +144,13 @@ export function handleSync(body, now = Date.now()) {
 
     const jobs = dispatch(id, Math.min(5, Math.max(0, int(body.free) ?? 2)), now);
     const interval = Math.min(60, Math.max(2, int(setting('sync_interval', 5)) ?? 5));
-    return { ack, jobs, config: { calls: callMode(), interval }, time: Math.floor(now / 1000) };
+    return {
+      ack,
+      jobs,
+      config: { calls: callMode(), interval, led: ledForDevice() },
+      update: updateOffer(id, str(body.fw, 20), now),
+      time: Math.floor(now / 1000),
+    };
   });
 }
 
@@ -158,6 +170,12 @@ function handleEvent(device, boot, ev, now) {
     case 'job':
     case 'at':
       return jobResult(device, int(ev.job), !!ev.ok, ev);
+    case 'fw': {
+      // firmware update result: ok = installed and restarting, else why it failed
+      const text = ev.ok ? `Firmware ${str(ev.version, 20)} installed, restarting` : `Firmware update to ${str(ev.version, 20)} failed: ${str(ev.msg, 200)}`;
+      db.prepare('UPDATE devices SET fw_result = ? WHERE id = ?').run(ev.ok ? `installed ${str(ev.version, 20)}` : `failed: ${str(ev.msg, 200)}`, device);
+      return log(text, { device_id: device, level: ev.ok ? 'info' : 'warn', ukey: `fw:${device}:${boot}:${ev.seq}` });
+    }
     case 'log':
       return log(str(ev.msg, 500), {
         device_id: device,

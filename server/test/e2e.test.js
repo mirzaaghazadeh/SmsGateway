@@ -2,6 +2,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,14 +13,37 @@ import { gsm7Encode } from '../src/shared/gsm.js';
 const KEYS = { ADMIN_PASSWORD: 'admin-pass', API_KEY: 'api-key' };
 const GW_KEY = 'K7Q2M9XD4TPAW3HZ'; // what the gateway made and shows on its setup page
 let BASE;
-let proc, dir, cookie;
+let proc, dir, cookie, fakeGithub;
 let seq = 0;
+
+// A stand-in for the GitHub API with one release that carries a firmware file.
+const FW_BIN = Buffer.concat([Buffer.from([0xe9]), randomBytes(4095)]);
+const FW_SHA = createHash('sha256').update(FW_BIN).digest('hex');
 
 before(async () => {
   dir = mkdtempSync(join(tmpdir(), 'gw-test-'));
+  fakeGithub = createServer((req, res) => {
+    const base = `http://127.0.0.1:${fakeGithub.address().port}`;
+    if (req.url.startsWith('/repos/test/gateway/releases')) {
+      res.setHeader('Content-Type', 'application/json');
+      return res.end(JSON.stringify([
+        { tag_name: 'v1.2.0-beta', prerelease: true, assets: [] },
+        { tag_name: 'v1.1.0', draft: false, prerelease: false, body: 'notes', html_url: `${base}/r`, published_at: '2026-11-17T00:00:00Z',
+          assets: [{ name: 'sms_gateway-esp32s3.bin', size: FW_BIN.length, digest: `sha256:${FW_SHA}`, browser_download_url: `${base}/dl/fw.bin` }] },
+        { tag_name: 'v1.0.5', assets: [{ name: 'sms_gateway-esp32s3.bin', size: 1, browser_download_url: `${base}/dl/old.bin` }] },
+      ]));
+    }
+    if (req.url === '/dl/fw.bin') return res.end(FW_BIN);
+    res.statusCode = 404;
+    res.end();
+  });
+  await new Promise((r) => fakeGithub.listen(0, '127.0.0.1', r));
   // port 0: the OS picks a free port, the server prints it
   proc = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'src/server.js'], {
-    env: { ...process.env, ...KEYS, PORT: '0', DATA_DIR: dir },
+    env: {
+      ...process.env, ...KEYS, PORT: '0', DATA_DIR: dir,
+      GITHUB_API: `http://127.0.0.1:${fakeGithub.address().port}`, FIRMWARE_REPO: 'test/gateway',
+    },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   const port = await new Promise((resolve, reject) => {
@@ -39,6 +64,7 @@ before(async () => {
 
 after(() => {
   proc?.kill();
+  fakeGithub?.close();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -209,6 +235,48 @@ test('AT command console round trip', async () => {
   const done = await panel('GET', `/api/jobs/${j.body.id}`);
   assert.equal(done.body.status, 'done');
   assert.match(done.body.result, /CSQ: 20/);
+});
+
+test('firmware update from a GitHub release', async () => {
+  // daily window far away from now, so only "Update now" can trigger it
+  const away = (new Date().getUTCHours() + 12) % 24;
+  assert.equal((await panel('PUT', '/api/firmware', { hour: away, tz: 'UTC', auto: true })).status, 200);
+
+  const fw = await panel('POST', '/api/firmware/check');
+  assert.equal(fw.status, 200);
+  assert.equal(fw.body.latest.version, '1.1.0'); // the beta is skipped, 1.0.5 is older
+  assert.equal(fw.body.ready, '1.1.0');
+
+  let r = await device(status());
+  assert.equal(r.body.update, null);
+  assert.equal((await panel('POST', '/api/devices/aabbccddeeff/update')).status, 200);
+  r = await device(status());
+  assert.equal(r.body.update.version, '1.1.0');
+  assert.equal(r.body.update.sha256, FW_SHA);
+  assert.equal(r.body.update.size, FW_BIN.length);
+  assert.equal((await device(status())).body.update, null); // not again while it installs
+
+  const dl = await fetch(`${BASE}${r.body.update.path}&id=aabbccddeeff`, { headers: { Authorization: `Bearer ${GW_KEY}` } });
+  assert.equal(dl.status, 200);
+  assert.ok(Buffer.from(await dl.arrayBuffer()).equals(FW_BIN));
+  assert.equal((await fetch(`${BASE}${r.body.update.path}&id=aabbccddeeff`)).status, 401);
+
+  await device({ ...status([{ seq: ++seq, t: 'fw', ok: true, version: '1.1.0' }]) });
+  await device({ ...status(), fw: '1.1.0' });
+  const d = await panel('GET', '/api/devices');
+  assert.equal(d.body.gateways[0].fw, '1.1.0');
+  assert.equal(d.body.firmware, '1.1.0');
+  assert.equal((await panel('POST', '/api/devices/aabbccddeeff/update')).status, 409); // up to date
+});
+
+test('status light settings reach the gateway', async () => {
+  assert.equal((await panel('PUT', '/api/settings', { led: { states: { ok: { color: 'green' } } } })).status, 400);
+  const s = await panel('PUT', '/api/settings', { led: { brightness: 40, states: { ok: { color: '#112233', mode: 'pulse' } } } });
+  assert.equal(s.body.led.states.ok.mode, 'pulse');
+  const r = await device({ ...status(), fw: '1.1.0' });
+  assert.equal(r.body.config.led.b, 40);
+  assert.equal(r.body.config.led.s.ok, '112233:pulse');
+  assert.equal(r.body.config.led.s.wifi, 'ffc000:blink');
 });
 
 test('settings and static panel', async () => {

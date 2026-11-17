@@ -5,7 +5,9 @@
 #include <WiFiClientSecure.h>
 #include "config.h"
 #include "events.h"
+#include "led.h"
 #include "modem.h"
+#include "ota.h"
 #include "settings.h"
 
 // The ESP-IDF root certificate bundle that ships inside the ESP32 core (Let's Encrypt, Google, ...),
@@ -77,6 +79,12 @@ static void addEvent(JsonArray arr, const Event &e) {
       o["slot"] = e.slot;
       o["msg"] = e.a;
       o["level"] = e.b;
+      break;
+    case EV_FW:
+      o["t"] = "fw";
+      o["ok"] = e.ok;
+      o["version"] = e.a;
+      o["msg"] = e.b;
       break;
   }
 }
@@ -232,8 +240,15 @@ static bool sync() {
     modem1.rejectCalls = modem2.rejectCalls = reject;
     uint32_t iv = cfg["interval"] | 5;
     interval = constrain(iv, 2u, 60u) * 1000;
+    led::apply(cfg["led"]);
   }
   for (JsonObject j : r["jobs"].as<JsonArray>()) handleJob(j);
+  JsonObject u = r["update"];
+  if (!u.isNull()) {
+    ota::offer(String((const char *)(u["version"] | "")), String((const char *)(u["path"] | "")), u["size"] | 0,
+               String((const char *)(u["sha256"] | "")));
+  }
+  ota::confirm();  // the server answered: this firmware works
   return true;
 }
 

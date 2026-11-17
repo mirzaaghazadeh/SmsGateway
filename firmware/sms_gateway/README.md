@@ -53,20 +53,41 @@ The program for the YD-ESP32-S3 inside the box. It:
 
 ## What the lights and screen mean
 
+Default status light colors (change them in the panel: Settings → Status light):
+
 | LED | Meaning |
 |---|---|
-| dim green | all good |
+| steady green | all good |
 | white flash | an SMS or call just came in or went out |
-| blinking blue | setup hotspot open, waiting for you |
-| blinking yellow | looking for the Wi-Fi |
-| slow red | Wi-Fi works but the server does not let it in yet. The OLED says why: "Add in panel" with the key, wrong address, ... |
-| fast red | BOOT is held: factory reset countdown |
+| slow orange blink | online, but no SIM card is ready |
+| slow red blink | Wi-Fi works but the server does not let it in yet. The OLED says why: "Add in panel" with the key, wrong address, ... |
+| yellow blink | looking for the Wi-Fi |
+| blue blink | setup hotspot open, waiting for you |
+| fast purple blink | installing a firmware update |
+| fast red blink | BOOT is held: factory reset countdown (not changeable) |
 
 OLED lines:
 1. Wi-Fi and server state.
 2. One line per SIM: operator and signal bars, or what is wrong ("no SIM card", "not answering",
    "SIM PIN on", "low voltage").
 3. Counters since start.
+
+## Updates over Wi-Fi
+
+Once a gateway is set up, you never need the USB cable again for new firmware:
+
+1. New versions are published as [GitHub releases](../../releases). A GitHub Action builds them.
+2. Your server downloads the newest one by itself.
+3. The gateway installs it daily at the hour set in the panel, or at once when you press
+   Devices → **Update to X.Y.Z**.
+
+During the update the light blinks purple, the OLED shows the progress, and the gateway restarts
+(about 30 s without SMS). The download is checked with SHA-256. If the new firmware cannot reach the
+server for 10 minutes, the gateway goes back to the old one.
+
+**First install without Arduino IDE**: download `sms_gateway-esp32s3-full.bin` from the newest
+release and flash it at address 0x0 over the COM port:
+`esptool.py --chip esp32s3 write_flash 0x0 sms_gateway-esp32s3-full.bin`.
 
 ## How it works
 
@@ -111,4 +132,6 @@ The older `firmware/sim800_test` sketch is still there for a plain one-module ch
 | `portal.*`, `portal_page.h` | setup hotspot and its page |
 | `display.*` | OLED screens |
 | `events.*` | queue of events waiting for the server |
-| `settings.*` | Wi-Fi and server settings in flash |
+| `settings.*` | Wi-Fi and server settings and the device key, in flash |
+| `ota.*` | firmware updates over Wi-Fi: download, SHA-256 check, install, rollback |
+| `led.*` | status light: one color and pattern per state, set from the panel |

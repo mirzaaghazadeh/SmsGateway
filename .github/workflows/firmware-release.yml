@@ -1,0 +1,86 @@
+# Builds the gateway firmware and publishes it as a GitHub release when a version tag is pushed.
+# Servers watch these releases and hand the update to their gateways (see server/src/firmware.js).
+#
+#   1. set FW_VERSION in firmware/sms_gateway/config.h, add the version to CHANGELOG.md, commit
+#   2. git tag v1.2.3 && git push origin v1.2.3
+#
+# A manual run (Actions -> Firmware release -> Run workflow) only builds and keeps the files as an artifact.
+name: Firmware release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the version
+        run: |
+          v=$(grep -oP '#define FW_VERSION "\K[0-9]+\.[0-9]+\.[0-9]+' firmware/sms_gateway/config.h)
+          echo "FW_VERSION=$v" >> "$GITHUB_ENV"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$v" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match FW_VERSION $v in config.h"
+            exit 1
+          fi
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Install the ESP32 core and libraries
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.0.7
+          arduino-cli lib install "ArduinoJson@7.4.3" "Adafruit SSD1306@2.5.17"
+
+      - name: Build
+        run: >
+          arduino-cli compile --warnings default
+          --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,PSRAM=opi"
+          --output-dir build firmware/sms_gateway
+
+      - name: Package
+        run: |
+          mkdir dist
+          cp build/sms_gateway.ino.bin dist/sms_gateway-esp32s3.bin
+          cp build/sms_gateway.ino.merged.bin dist/sms_gateway-esp32s3-full.bin
+          cd dist
+          sha256sum sms_gateway-esp32s3.bin > sms_gateway-esp32s3.bin.sha256
+          sha256sum sms_gateway-esp32s3-full.bin > sms_gateway-esp32s3-full.bin.sha256
+          ls -l
+
+      - name: Release notes
+        run: |
+          {
+            echo "Firmware $FW_VERSION for the SMS gateway (YD-ESP32-S3 N16R8)."
+            echo
+            # the CHANGELOG.md section of this version
+            awk -v v="$FW_VERSION" '$0 ~ "^## " v "( |$)" {p=1; next} /^## / {p=0} p' CHANGELOG.md
+            echo
+            echo "**Gateways that are already set up install this by themselves** (daily at the hour set in"
+            echo "the panel, or Devices -> Update now). The server downloads \`sms_gateway-esp32s3.bin\` from here."
+            echo
+            echo "First install over USB: flash \`sms_gateway-esp32s3-full.bin\` at address 0x0, for example"
+            echo "\`esptool.py --chip esp32s3 write_flash 0x0 sms_gateway-esp32s3-full.bin\`."
+          } > notes.md
+          cat notes.md
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "Firmware $FW_VERSION" --notes-file notes.md
+
+      - name: Keep the files (manual run)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ env.FW_VERSION }}
+          path: dist

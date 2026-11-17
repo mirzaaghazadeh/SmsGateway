@@ -25,7 +25,9 @@
 #include "config.h"
 #include "display.h"
 #include "events.h"
+#include "led.h"
 #include "modem.h"
+#include "ota.h"
 #include "portal.h"
 #include "settings.h"
 
@@ -105,28 +107,30 @@ static void watchWifi() {
   }
 }
 
-// ---------------- RGB LED ----------------
+// ---------------- RGB status light (colors and patterns set in the panel) ----------------
 
 static void ledLoop() {
-  static uint32_t last = 0;
-  static uint32_t lastColor = 0xffffffff;
-  uint32_t now = millis();
-  if (now - last < 40) return;
-  last = now;
-  bool blink = (now / 500) % 2;
-  uint8_t r = 0, g = 0, b = 0;
-  if (factoryHeld) r = (now / 100) % 2 ? 40 : 0;                                  // fast red: reset countdown
-  else if (portal::active() && !WiFi.isConnected()) b = blink ? 30 : 0;           // blue blink: setup hotspot
-  else if (!WiFi.isConnected()) r = blink ? 25 : 0, g = blink ? 12 : 0;           // yellow blink: no Wi-Fi
-  else if (!cloud::online()) r = (now / 1000) % 2 ? 30 : 0;                       // slow red: server problem
-  else if (now - lastActivityMs < 150) r = g = b = 40;                            // white flash: SMS / call
-  else g = 6;                                                                     // dim green: all good
-  uint32_t color = (r << 16) | (g << 8) | b;
-  if (color != lastColor) {
-    lastColor = color;
-    rgbLedWrite(LED_PIN, r, g, b);
-  }
+  led::State s;
+  if (factoryHeld) s = led::RESET;
+  else if (ota::active()) s = led::UPDATE;
+  else if (!settings.configured() || (portal::active() && !WiFi.isConnected())) s = led::SETUP;
+  else if (!WiFi.isConnected()) s = led::WIFI;
+  else if (!cloud::online()) s = led::SERVER;
+  else if (!modem1.ready() && !modem2.ready()) s = led::SIM;
+  else s = led::OK;
+  led::show(s, lastActivityMs && millis() - lastActivityMs < 150);
 }
+
+// Called during a firmware download, which blocks loop() for a few seconds.
+static void updateTick() {
+  modem1.loop();
+  modem2.loop();
+  ledLoop();
+}
+
+// The Arduino core keeps a new firmware only if this returns false; we confirm it ourselves once
+// the server answers (ota::confirm), so a broken update rolls back to the old firmware.
+bool verifyRollbackLater() { return true; }
 
 // ---------------- serial console (bench testing) ----------------
 
@@ -200,6 +204,7 @@ void setup() {
   pinMode(BOOT_PIN, INPUT_PULLUP);
   rgbLedWrite(LED_PIN, 0, 0, 10);
   settings.load();
+  led::begin();
   Serial.printf("\nSMS Gateway %s, id %s, last restart: %s\n", FW_VERSION, deviceId().c_str(), resetReason().c_str());
   display::begin();
   modem1.begin();
@@ -226,6 +231,13 @@ void loop() {
     if (cloud::setupRequested()) portal::start(true);
     if (cloud::rebootRequested()) {
       Serial.println("restart asked from the panel");
+      delay(200);
+      ESP.restart();
+    }
+    ota::loop(updateTick);
+    ota::watchdog();
+    if (ota::installed() && (events.empty() || ota::restartDue())) {  // the panel knows, or 60 s passed
+      Serial.println("restarting into the new firmware");
       delay(200);
       ESP.restart();
     }

@@ -64,6 +64,15 @@ void evAt(uint32_t job, bool ok, const String &out) {
   Serial.printf("AT result (%s):\n%s\n", ok ? "OK" : "error", out.c_str());
 }
 
+void evFw(bool ok, const String &version, const String &msg) {
+  Event e{};
+  e.type = EV_FW;
+  e.ok = ok;
+  e.a = version;
+  e.b = msg;
+  push(e);
+}
+
 void evLog(uint8_t slot, const String &msg, const char *level) {
   Event e{};
   e.type = EV_LOG;

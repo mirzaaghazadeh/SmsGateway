@@ -43,6 +43,8 @@ panel with hand-drawn SVG charts. One container, one SQLite file.
    | `ADMIN_PASSWORD` | Panel password. Set it. If missing, one is generated and printed in the deploy log. |
    | `API_KEY` | Optional. Key for `/api/v1`. If missing, one is generated; Settings can make a new one. |
    | `SESSION_SECRET` | Optional. Signs the login cookie. Generated if missing. |
+   | `FIRMWARE_REPO` | Optional. GitHub repository whose releases carry the firmware, default `mirzaaghazadeh/SmsGateway`. `none` turns update checks off. |
+   | `GITHUB_TOKEN` | Optional. Only if GitHub limits the update checks (60 per hour per server IP without it). |
    | `PORT` | Default `3000`. |
    | `DATA_DIR` | Default `/data`. |
 
@@ -54,6 +56,20 @@ panel with hand-drawn SVG charts. One container, one SQLite file.
       a few seconds.
 
 The image has a health check on `GET /health`.
+
+## Firmware updates and the status light
+
+- **Updates**: every 6 hours (and on Settings → Firmware updates → Check now) the server looks at
+  the GitHub releases of `FIRMWARE_REPO`. It downloads the newest `sms_gateway-esp32s3.bin`, checks its
+  SHA-256 against the release, and keeps it in `/data/firmware`. Gateways with an older version get it:
+  - once a day at the hour set under Settings, in your time zone (automatic updates can be turned off);
+  - or at once with Devices → **Update to X.Y.Z**.
+
+  The gateway downloads the file from this server with its device key and checks the SHA-256 again.
+  It keeps the new firmware only after it reaches the server; otherwise it goes back to the old one.
+- **Status light**: Settings → Status light sets a color and a pattern (steady, breathing, blinks, short
+  flash, off) for each gateway state, plus the brightness. The gateway gets them on its next check-in
+  and saves them, so they also work while Wi-Fi is down.
 
 ## Run it locally
 

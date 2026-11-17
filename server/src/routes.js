@@ -5,6 +5,8 @@ import {
   handleSync, createOutgoing, getMessage, publicMessage, retryMessage, createJob, getJob, csqToDbm, ONLINE_MS,
 } from './gateway.js';
 import { webhookSecret, testWebhook, EVENTS } from './webhook.js';
+import { checkReleases, firmwareView, cachedFirmware, readFirmware, newer } from './firmware.js';
+import { ledSettings, setLedSettings, LED_STATES, LED_MODES } from './led.js';
 
 export const router = new Router();
 
@@ -16,6 +18,17 @@ router.post('/api/device/sync', async (req) => {
   if (!/^[A-Za-z0-9_-]{4,32}$/.test(id)) throw new HttpError(400, 'Bad device id');
   auth.authenticateDevice(req, id);
   return handleSync(body);
+});
+
+// Firmware image for an update the server offered (GET with the gateway's key).
+router.get('/api/device/firmware', async (req, res) => {
+  const id = String(req.query.id || '');
+  if (!/^[A-Za-z0-9_-]{4,32}$/.test(id)) throw new HttpError(400, 'Bad device id');
+  auth.authenticateDevice(req, id);
+  const bin = readFirmware(String(req.query.v || ''));
+  if (!bin) throw new HttpError(404, 'This firmware version is not on the server');
+  res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': bin.length, 'Cache-Control': 'no-store' });
+  res.end(bin);
 });
 
 // ---------- panel auth ----------
@@ -206,7 +219,41 @@ router.get('/api/logs', panel((req) => {
   return { items: rows.slice(0, limit), more: rows.length > limit };
 }));
 
-router.get('/api/devices', panel(() => ({ gateways: gatewayList(), waiting: auth.waitingGateways() })));
+router.get('/api/devices', panel(() => ({
+  gateways: gatewayList(),
+  waiting: auth.waitingGateways(),
+  firmware: cachedFirmware()?.version || null,
+})));
+router.post('/api/devices/:id/update', panel((req) => {
+  const d = db.prepare('SELECT * FROM devices WHERE id = ?').get(req.params.id);
+  if (!d) notFound();
+  const c = cachedFirmware();
+  if (!c) throw new HttpError(409, 'No firmware release on the server yet. Check for updates in Settings.');
+  if (!newer(c.version, d.fw)) throw new HttpError(409, `Already up to date (${d.fw})`);
+  db.prepare('UPDATE devices SET fw_requested = 1, fw_offered = NULL, fw_result = ? WHERE id = ?').run(`waiting to install ${c.version}`, d.id);
+  log(`Update to ${c.version} requested from the panel`, { device_id: d.id });
+  return { ok: true, version: c.version };
+}));
+router.get('/api/firmware', panel(() => firmwareView()));
+router.post('/api/firmware/check', panel(() => checkReleases()));
+router.put('/api/firmware', panel(async (req) => {
+  const b = await readJson(req);
+  if (b.auto !== undefined) setSetting('fw_auto', b.auto ? 'on' : 'off');
+  if (b.hour !== undefined) {
+    const h = Number(b.hour);
+    if (!Number.isInteger(h) || h < 0 || h > 23) throw new HttpError(400, 'Hour goes from 0 to 23');
+    setSetting('fw_hour', h);
+  }
+  if (b.tz !== undefined) {
+    try {
+      new Intl.DateTimeFormat('en', { timeZone: String(b.tz) });
+    } catch {
+      throw new HttpError(400, 'Unknown time zone');
+    }
+    setSetting('fw_tz', String(b.tz));
+  }
+  return firmwareView();
+}));
 router.post('/api/devices', panel(async (req) => {
   const b = await readJson(req);
   const keyId = auth.addDeviceKey(b.key, b.name);
@@ -237,6 +284,9 @@ function settingsView(req) {
     webhook_url: setting('webhook_url', ''),
     webhook_secret: webhookSecret(),
     webhook_events: EVENTS,
+    led: ledSettings(),
+    led_states: LED_STATES,
+    led_modes: LED_MODES,
     api_key: auth.apiKey(),
     api_key_from_env: !!process.env.API_KEY,
     server_url: `${proto}://${req.headers['x-forwarded-host'] || req.headers.host}`,
@@ -255,6 +305,7 @@ router.put('/api/settings', panel(async (req) => {
     if (u && !/^https?:\/\/[^\s]+$/i.test(u)) throw new HttpError(400, 'Webhook URL must start with http:// or https://');
     setSetting('webhook_url', u);
   }
+  if (b.led !== undefined) setLedSettings(b.led);
   return settingsView(req);
 }));
 router.post('/api/settings/api-key', panel((req) => (auth.regenerateApiKey(), settingsView(req))));

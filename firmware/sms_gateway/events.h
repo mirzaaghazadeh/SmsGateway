@@ -3,7 +3,7 @@
 #include <deque>
 
 // Things that happened and must reach the server. Kept in RAM until the server confirms them.
-enum EvType : uint8_t { EV_SMS, EV_CALL, EV_JOB, EV_AT, EV_LOG };
+enum EvType : uint8_t { EV_SMS, EV_CALL, EV_JOB, EV_AT, EV_LOG, EV_FW };
 
 struct Event {
   uint32_t seq;
@@ -24,6 +24,7 @@ void evCall(uint8_t slot, const String &number, const char *action, uint32_t rin
 void evJob(uint32_t job, bool ok, const String &info);
 void evAt(uint32_t job, bool ok, const String &out);
 void evLog(uint8_t slot, const String &msg, const char *level = "info");
+void evFw(bool ok, const String &version, const String &msg);  // firmware update result
 
 // counters since boot, for the OLED
 extern uint32_t statIn, statOut, statFail, statCalls;

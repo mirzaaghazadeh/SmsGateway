@@ -3,7 +3,7 @@ import { mkdirSync, accessSync, constants } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
-const dataDir = process.env.DATA_DIR || (process.env.NODE_ENV === 'production' ? '/data' : './data');
+export const dataDir = process.env.DATA_DIR || (process.env.NODE_ENV === 'production' ? '/data' : './data');
 
 function openDatabase() {
   try {
@@ -91,6 +91,18 @@ CREATE TABLE IF NOT EXISTS logs (
 );
 CREATE INDEX IF NOT EXISTS logs_ts ON logs (ts);
 `);
+
+// Columns added after the first release: add them to databases made by older versions.
+function addColumns(table, columns) {
+  const have = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+  for (const [name, def] of columns) if (!have.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`);
+}
+addColumns('devices', [
+  ['fw_requested', 'INTEGER NOT NULL DEFAULT 0'], // "Update now" pressed in the panel
+  ['fw_offered', 'TEXT'],                          // firmware version last offered to this gateway
+  ['fw_offered_at', 'INTEGER'],
+  ['fw_result', 'TEXT'],                           // what the last update attempt said
+]);
 
 const getSetting = db.prepare('SELECT value FROM settings WHERE key = ?');
 const putSetting = db.prepare(

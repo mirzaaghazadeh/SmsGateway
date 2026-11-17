@@ -5,6 +5,7 @@ import { router } from './routes.js';
 import { HttpError, sendJson, serveStatic } from './http.js';
 import { adminPassword } from './auth.js';
 import { maintenance } from './gateway.js';
+import { checkReleases } from './firmware.js';
 import { log } from './db.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -33,6 +34,7 @@ const server = createServer(async (req, res) => {
       if (m.methodNotAllowed) throw new HttpError(405, 'Method not allowed');
       req.params = m.params;
       const result = await m.handler(req, res);
+      if (res.headersSent) return; // the handler sent a file itself
       return sendJson(res, res.statusCode || 200, result ?? { ok: true });
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Method not allowed');
@@ -67,6 +69,10 @@ setInterval(() => {
     console.error('maintenance', e);
   }
 }, 30_000).unref();
+
+// look for new firmware releases on GitHub: shortly after start, then every 6 hours
+setTimeout(() => checkReleases(), 5_000).unref();
+setInterval(() => checkReleases(), 6 * 3600_000).unref();
 
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.on(sig, () => {

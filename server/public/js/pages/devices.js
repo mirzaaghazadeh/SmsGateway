@@ -54,7 +54,7 @@ export default function devices(page) {
     clear(waitingHint, r.waiting.length ? h('div', { class: 'note' }, icon('alert'),
       h('span', {}, r.waiting.map((w, i) => [i ? h('br') : null,
         `A gateway with a key ending in `, h('b', { class: 'mono' }, w.hint), ` tried to connect ${ago(w.at)}. Paste its full key here to add it.`]))) : null);
-    clear(listBox, gateways.map((g) => gatewayPanel(g, refresh)));
+    clear(listBox, gateways.map((g) => gatewayPanel(g, refresh, r.firmware)));
     if (gateways.some((g) => g.connected) && !consoleBuilt) {
       consoleBuilt = true;
       consoleBox.append(atConsole(() => gateways.filter((g) => g.connected)));
@@ -127,7 +127,39 @@ async function runJob(deviceId, body, onDone) {
   onDone({ status: 'lost', result: 'No answer within 2 minutes' });
 }
 
-function gatewayPanel(g, refresh) {
+// true when version a is newer than b ("1.1.0" > "1.0.9")
+function newer(a, b) {
+  const p = (v) => String(v || '').replace(/^v/, '').split('.').map(Number);
+  const x = p(a);
+  const y = p(b);
+  if (x.length !== 3 || x.some(isNaN)) return false;
+  if (y.length !== 3 || y.some(isNaN)) return true;
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+  return false;
+}
+
+function firmwareLine(g, latest, refresh) {
+  const canUpdate = latest && newer(latest, g.fw);
+  const btn = canUpdate ? h('button', {
+    class: 'btn sm', type: 'button', disabled: !g.online,
+    onclick: (e) => busy(e.currentTarget, async () => {
+      try {
+        const r = await api(`/api/devices/${encodeURIComponent(g.id)}/update`, { method: 'POST' });
+        toast(`The gateway installs ${r.version} at its next check-in and restarts by itself`);
+        refresh();
+      } catch (ex) {
+        toast(ex.message, 'bad');
+      }
+    }),
+  }, icon('refresh'), `Update to ${latest}`) : null;
+  return h('dd', { class: 'row', style: { gap: '10px' } },
+    h('span', {}, g.fw || '–', canUpdate ? '' : latest ? ' · up to date' : ''),
+    btn,
+    g.fw_result ? h('span', { class: 'faint small' }, g.fw_result) : null
+  );
+}
+
+function gatewayPanel(g, refresh, latestFw) {
   const act = (label, iconName, body, confirmText) =>
     h('button', {
       class: 'btn', type: 'button', disabled: !g.online,
@@ -167,7 +199,7 @@ function gatewayPanel(g, refresh) {
       h('dl', { class: 'kv' },
         h('dt', {}, 'Key'), h('dd', { class: 'mono' }, `…${g.hint}`),
         h('dt', {}, 'Added'), h('dd', {}, shortTime(g.added_at)),
-        g.connected ? [h('dt', {}, 'ID'), h('dd', { class: 'mono' }, g.id), h('dt', {}, 'Firmware'), h('dd', {}, g.fw || '–')] : null
+        g.connected ? [h('dt', {}, 'ID'), h('dd', { class: 'mono' }, g.id), h('dt', {}, 'Firmware'), firmwareLine(g, latestFw, refresh)] : null
       ),
       g.connected
         ? h('div', { class: 'row' },
