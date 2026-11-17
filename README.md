@@ -15,6 +15,23 @@ A DIY two-SIM **SMS and missed-call gateway**: an ESP32-S3 with two SIM800L GSM 
 
 All images are rendered from the OpenSCAD source in `source/`.
 
+## The idea
+
+This is a hobby project. I carried the idea around for about three years before I finally sat
+down and started building it.
+
+The idea is simple: instead of keeping a spare phone charged for every extra SIM card, put the
+SIM cards in one small box that stays plugged in at home and takes care of them:
+
+- Every SMS that arrives on either SIM goes over Wi-Fi to **your own server**, and so does every
+  incoming call (rejected and logged as a missed call).
+- You read everything in a **web panel from anywhere**: verification codes, bank messages, who called.
+- Your own apps can **send SMS** through a small HTTP API, or get a **webhook** the moment a
+  message arrives.
+- It is built from cheap off-the-shelf parts (an ESP32 and two SIM800L modules) in a 3D-printed
+  case, and the server is self-hosted: no SMS service subscription, and no third party reading
+  your messages.
+
 ## Features
 
 - **Two SIM cards**, each on its own SIM800L, cards slide in from the outside through the front wall.
