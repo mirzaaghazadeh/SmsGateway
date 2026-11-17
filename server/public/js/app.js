@@ -4,7 +4,7 @@ import messages from './pages/messages.js';
 import calls from './pages/calls.js';
 import signal from './pages/signal.js';
 import analytics from './pages/analytics.js';
-import device from './pages/device.js';
+import devices from './pages/devices.js';
 import settings from './pages/settings.js';
 
 const ROUTES = [
@@ -13,7 +13,7 @@ const ROUTES = [
   { path: '/calls', title: 'Missed calls', icon: 'calls', page: calls },
   { path: '/signal', title: 'Signal', icon: 'signal', page: signal },
   { path: '/analytics', title: 'Analytics', icon: 'analytics', page: analytics },
-  { path: '/device', title: 'Device', icon: 'device', page: device },
+  { path: '/devices', title: 'Devices', icon: 'device', page: devices },
   { path: '/settings', title: 'Settings', icon: 'settings', page: settings },
 ];
 
@@ -77,12 +77,13 @@ function shell() {
   });
   stopRail?.();
   stopRail = poll(async () => {
-    const devices = await api('/api/devices');
-    const on = devices.filter((d) => d.online).length;
-    const ready = devices.flatMap((d) => (d.online ? d.sims : [])).filter((x) => x.ready).length;
+    const { gateways } = await api('/api/devices');
+    const on = gateways.filter((d) => d.online).length;
+    const ready = gateways.flatMap((d) => (d.online ? d.sims : [])).filter((x) => x.ready).length;
+    const connected = gateways.some((d) => d.connected);
     clear(railStatus,
-      h('span', { class: `dot ${on ? 'ok' : devices.length ? 'bad' : ''}` }),
-      !devices.length ? 'No gateway yet' : on ? `Online · ${ready} SIM${ready === 1 ? '' : 's'} ready` : 'Gateway offline'
+      h('span', { class: `dot ${on ? 'ok' : connected ? 'bad' : ''}` }),
+      !gateways.length ? 'No gateway yet' : !connected ? 'Waiting for gateway' : on ? `Online · ${ready} SIM${ready === 1 ? '' : 's'} ready` : 'Gateway offline'
     );
   }, 10_000);
   route();

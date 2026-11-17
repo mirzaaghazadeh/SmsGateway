@@ -8,7 +8,8 @@ import { join } from 'node:path';
 import { decodePdu, pack7 } from '../src/pdu.js';
 import { gsm7Encode } from '../src/shared/gsm.js';
 
-const KEYS = { ADMIN_PASSWORD: 'admin-pass', DEVICE_KEY: 'dev-key', API_KEY: 'api-key' };
+const KEYS = { ADMIN_PASSWORD: 'admin-pass', API_KEY: 'api-key' };
+const GW_KEY = 'K7Q2M9XD4TPAW3HZ'; // what the gateway made and shows on its setup page
 let BASE;
 let proc, dir, cookie;
 let seq = 0;
@@ -32,6 +33,8 @@ before(async () => {
     });
   });
   BASE = `http://127.0.0.1:${port}`;
+  const r = await call('POST', '/api/auth/login', { password: 'admin-pass' });
+  cookie = r.headers.get('set-cookie').split(';')[0];
 });
 
 after(() => {
@@ -49,7 +52,7 @@ async function call(method, path, body, headers = {}) {
   return { status: r.status, body: text ? JSON.parse(text) : null, headers: r.headers };
 }
 
-const device = (body) => call('POST', '/api/device/sync', body, { Authorization: 'Bearer dev-key' });
+const device = (body, key = GW_KEY) => call('POST', '/api/device/sync', body, { Authorization: `Bearer ${key}` });
 const apiCall = (m, p, b) => call(m, p, b, { Authorization: 'Bearer api-key' });
 const panel = (m, p, b) => call(m, p, b, { Cookie: cookie });
 
@@ -79,15 +82,39 @@ function deliver(from, text, concat) {
   return '07919052000000F0' + h(concat ? 0x44 : 0x04) + h(digits.length) + '91' + sw + '0000' + '62111712000000' + h(udl) + ud.map(h).join('');
 }
 
-test('device key is required', async () => {
-  assert.equal((await call('POST', '/api/device/sync', status(), { Authorization: 'Bearer nope' })).status, 401);
+test('a gateway that is not added yet is turned away', async () => {
+  assert.equal((await device(status(), 'nope')).status, 401);
+  const r = await device(status());
+  assert.equal(r.status, 403);
+  assert.equal(r.body.code, 'not_added');
+  const d = await panel('GET', '/api/devices');
+  assert.deepEqual(d.body.gateways, []);
+  assert.equal(d.body.waiting[0].hint, 'W3HZ');
+  assert.equal(d.body.waiting[0].device_id, 'aabbccddeeff');
 });
 
-test('first sync registers the gateway', async () => {
+test('adding the key in the panel lets the gateway in', async () => {
+  assert.equal((await panel('POST', '/api/devices', { key: 'abc' })).status, 400);
+  const add = await panel('POST', '/api/devices', { key: 'k7q2-m9xd 4tpa-w3hz', name: 'Home' });
+  assert.equal(add.status, 200);
+  assert.equal(add.body.hint, 'W3HZ');
+  assert.equal(add.body.connected, false);
+  assert.equal((await panel('POST', '/api/devices', { key: GW_KEY })).status, 409);
+
   const r = await device(status());
   assert.equal(r.status, 200);
   assert.deepEqual(r.body.jobs, []);
   assert.equal(r.body.config.calls, 'reject');
+  const d = await panel('GET', '/api/devices');
+  assert.equal(d.body.gateways[0].connected, true);
+  assert.equal(d.body.gateways[0].name, 'Home');
+  assert.deepEqual(d.body.waiting, []);
+});
+
+test('a key works for one board only', async () => {
+  const r = await device({ ...status(), id: '001122334455' });
+  assert.equal(r.status, 403);
+  assert.equal(r.body.code, 'key_in_use');
 });
 
 test('API SMS goes out through the gateway', async () => {
@@ -154,9 +181,6 @@ test('incoming SMS (single and two-part) and a missed call', async () => {
 test('panel login, overview, stats, signals', async () => {
   assert.equal((await call('GET', '/api/overview')).status, 401);
   assert.equal((await call('POST', '/api/auth/login', { password: 'wrong' })).status, 401);
-  const r = await call('POST', '/api/auth/login', { password: 'admin-pass' });
-  assert.equal(r.status, 200);
-  cookie = r.headers.get('set-cookie').split(';')[0];
 
   const o = await panel('GET', '/api/overview');
   assert.equal(o.body.devices.length, 1);
@@ -190,11 +214,20 @@ test('AT command console round trip', async () => {
 test('settings and static panel', async () => {
   const s = await panel('PUT', '/api/settings', { call_mode: 'ignore' });
   assert.equal(s.body.call_mode, 'ignore');
-  assert.equal(s.body.device_key, 'dev-key');
+  assert.match(s.body.server_url, /^http:\/\/127\.0\.0\.1:\d+$/);
   const r = await device(status());
   assert.equal(r.body.config.calls, 'ignore');
   const html = await fetch(BASE + '/messages');
   assert.equal(html.status, 200);
   assert.match(await html.text(), /<html/);
   assert.equal((await fetch(BASE + '/js/gsm.js')).status, 200);
+});
+
+test('removing a gateway locks it out', async () => {
+  const d = await panel('GET', '/api/devices');
+  assert.equal((await panel('DELETE', `/api/devices/key/${d.body.gateways[0].key_id}`)).status, 200);
+  const r = await device(status());
+  assert.equal(r.status, 403);
+  assert.equal(r.body.code, 'not_added');
+  assert.deepEqual((await panel('GET', '/api/overview')).body.devices, []);
 });

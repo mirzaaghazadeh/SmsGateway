@@ -1,6 +1,6 @@
-// Secrets and authentication: admin login for the panel, device key, API key.
+// Secrets and authentication: admin login for the panel, gateway keys, API key.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { persistentSecret, setSetting, setting, log } from './db.js';
+import { db, persistentSecret, setSetting, setting, log, tx } from './db.js';
 import { HttpError, clientIp, isHttps, readJson } from './http.js';
 
 export const SESSION_DAYS = 30;
@@ -15,7 +15,6 @@ export function adminPassword() {
   return pw;
 }
 
-export const deviceKey = () => process.env.DEVICE_KEY || persistentSecret('device_key', 18);
 export const apiKey = () => process.env.API_KEY || persistentSecret('api_key', 24);
 const sessionSecret = () => process.env.SESSION_SECRET || persistentSecret('session_secret', 32);
 
@@ -36,8 +35,66 @@ function bearer(req) {
   return h.startsWith('Bearer ') ? h.slice(7).trim() : null;
 }
 
-export function requireDevice(req) {
-  if (!safeEqual(bearer(req), deviceKey())) throw new HttpError(401, 'Wrong device key');
+// ---------- gateway keys ----------
+// Each gateway makes its own key, e.g. K7Q2-M9XD-4TPA-W3HZ: 16 characters from an alphabet
+// without 0/O and 1/I, so it can be read off a small screen and typed. The owner adds it in the panel.
+
+const KEY_RE = /^[2-9A-HJ-NP-Z]{16}$/;
+export const normalizeKey = (k) => String(k ?? '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+const hashKey = (k) => createHash('sha256').update(`gateway-key:${k}`).digest('hex');
+
+export function addDeviceKey(rawKey, name) {
+  const key = normalizeKey(rawKey);
+  if (!KEY_RE.test(key)) {
+    throw new HttpError(400, 'A device key has 16 letters and digits, like K7Q2-M9XD-4TPA-W3HZ. Copy it from the gateway setup page.');
+  }
+  const hash = hashKey(key);
+  if (db.prepare('SELECT 1 FROM device_keys WHERE key_hash = ?').get(hash)) throw new HttpError(409, 'This gateway is already added');
+  const r = db
+    .prepare('INSERT INTO device_keys (key_hash, hint, name, added_at) VALUES (?, ?, ?, ?)')
+    .run(hash, key.slice(-4), String(name || '').trim().slice(0, 40) || null, Date.now());
+  waiting.delete(hash);
+  log(`Gateway key …${key.slice(-4)} added${name ? ` as "${String(name).trim()}"` : ''}`);
+  return Number(r.lastInsertRowid);
+}
+
+// Gateways that knocked with a key nobody added yet (kept in memory, shown on the Devices page).
+const waiting = new Map(); // key hash -> { hint, device_id, ip, at }
+
+export function waitingGateways(now = Date.now()) {
+  for (const [h, w] of waiting) if (now - w.at > 30 * 60_000) waiting.delete(h);
+  return [...waiting.values()].sort((a, b) => b.at - a.at).slice(0, 5);
+}
+
+// Checks the Bearer key of a gateway check-in. Returns its device_keys row; binds the key to this
+// ESP32 on the first check-in, so a copied key cannot be used by a second board.
+export function authenticateDevice(req, deviceId) {
+  const key = normalizeKey(bearer(req));
+  if (!KEY_RE.test(key)) throw new HttpError(401, 'Missing device key', 'bad_key');
+  const hash = hashKey(key);
+  const row = db.prepare('SELECT * FROM device_keys WHERE key_hash = ?').get(hash);
+  const now = Date.now();
+  if (!row) {
+    const prev = waiting.get(hash);
+    if (!prev || now - prev.at > 10 * 60_000) {
+      log(`A gateway (ID ${deviceId}) with key …${key.slice(-4)} is trying to connect. Add its key under Devices.`, { level: 'warn' });
+    }
+    waiting.set(hash, { hint: key.slice(-4), device_id: deviceId, ip: clientIp(req), at: now });
+    throw new HttpError(403, 'This gateway is not added yet: add its device key in the panel under Devices', 'not_added');
+  }
+  if (row.device_id === deviceId) return row;
+  if (row.device_id) throw new HttpError(403, 'This device key already belongs to another gateway', 'key_in_use');
+  return tx(() => {
+    // the same board with a new key: the new key replaces the old one, keeping the name
+    const old = db.prepare('SELECT * FROM device_keys WHERE device_id = ?').get(deviceId);
+    if (old) {
+      db.prepare('DELETE FROM device_keys WHERE id = ?').run(old.id);
+      if (!row.name && old.name) db.prepare('UPDATE device_keys SET name = ? WHERE id = ?').run(old.name, row.id);
+    }
+    db.prepare('UPDATE device_keys SET device_id = ? WHERE id = ?').run(deviceId, row.id);
+    log(`Gateway with key …${row.hint} checked in for the first time (ID ${deviceId})`, { device_id: deviceId });
+    return db.prepare('SELECT * FROM device_keys WHERE id = ?').get(row.id);
+  });
 }
 
 export function requireApiKey(req) {

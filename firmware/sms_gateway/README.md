@@ -26,23 +26,27 @@ The program for the YD-ESP32-S3 inside the box. It:
 
 ## First setup
 
-1. Power it. The OLED shows **SETUP**, the hotspot name (`SMS-Gateway-XXXX`) and the password
-   `smsgateway`. The LED blinks blue.
+1. Power it. The OLED shows the hotspot name (`SMS-Gateway-XXXX`), the password `smsgateway` and
+   the gateway's **device key**. The LED blinks blue.
+   - The gateway made the key itself on its first start, for example `K7Q2-M9XD-4TPA-W3HZ`.
 2. Join that Wi-Fi with your phone. The setup page opens by itself; if not, open `http://192.168.4.1`.
 3. Fill in the page:
-   - Choose your Wi-Fi and type its password.
-   - Paste the **server address** and **device key**. Both are in the panel under Settings →
-     Connect a gateway.
-4. Press **Save and connect**. The page shows the address it got. The gateway then restarts and
-   appears in the panel within a few seconds.
+   - Choose your Wi-Fi (2.4 GHz only) and type its password.
+   - Enter your **server address**, for example `https://sms.example.com`.
+   - Press **Copy** next to the device key at the top of the page.
+4. Press **Save and connect**. The page shows the address it got, then the gateway restarts.
+5. In the panel, open **Devices → Add a gateway** and paste the key. Until you do, the OLED says
+   "Add in panel" with the key. A few seconds after you add it, the gateway shows up online.
 
 ## Change the Wi-Fi or server later
 
 - **Hold BOOT for 5 seconds** (the button next to RST on the ESP32). The OLED counts down; let go
-  to cancel. It erases Wi-Fi and server settings and opens the setup hotspot again.
+  to cancel. It erases Wi-Fi and server settings and opens the setup hotspot again. The device key
+  stays, so you don't have to add the gateway again.
+  - Giving the gateway to someone else? On the setup page, Advanced → **Make a new device key**.
   - The RST button only restarts the chip; the program never sees it.
   - Holding BOOT *while pressing* RST puts the ESP32 into USB flash mode instead.
-- **From the panel**: Device → Open Wi-Fi setup. The hotspot opens while the gateway stays online.
+- **From the panel**: Devices → Open Wi-Fi setup. The hotspot opens while the gateway stays online.
   It closes by itself after 10 minutes without visitors.
 - **Wi-Fi gone**: if the saved Wi-Fi is missing for 3 minutes (new router, moved house), the hotspot
   opens by itself. The gateway keeps retrying the old network in the meantime.
@@ -55,7 +59,7 @@ The program for the YD-ESP32-S3 inside the box. It:
 | white flash | an SMS or call just came in or went out |
 | blinking blue | setup hotspot open, waiting for you |
 | blinking yellow | looking for the Wi-Fi |
-| slow red | Wi-Fi works but the server does not answer (the OLED says why: wrong device key, wrong address, ...) |
+| slow red | Wi-Fi works but the server does not let it in yet. The OLED says why: "Add in panel" with the key, wrong address, ... |
 | fast red | BOOT is held: factory reset countdown |
 
 OLED lines:

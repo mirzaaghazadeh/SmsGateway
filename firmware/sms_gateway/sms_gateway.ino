@@ -2,14 +2,16 @@
   SMS Gateway: YD-ESP32-S3 (N16R8) + 2x SIM800L + 0.96" OLED.
 
   First start: the gateway opens the Wi-Fi hotspot "SMS-Gateway-XXXX" (password: smsgateway).
-  Join it with a phone, the setup page opens (or go to http://192.168.4.1), choose your Wi-Fi
-  and paste the server address and device key from the panel (Settings).
+  Join it with a phone, the setup page opens (or go to http://192.168.4.1): choose your Wi-Fi and
+  enter the server address. The page (and the OLED) shows this gateway's device key: add that key
+  in the panel under Devices. The gateway made the key itself on its first start.
 
   Then it checks in with the server every 5 s: status of both SIMs, received SMS (raw PDU),
   missed calls; it gets back SMS to send and commands. All SMS encoding happens on the server.
 
   Hold the BOOT button for 5 s at any time: Wi-Fi and server settings are erased and the setup
-  hotspot opens again. (RST only restarts; BOOT held while pressing RST starts the USB flash mode.)
+  hotspot opens again; the device key stays. (RST only restarts; BOOT held while pressing RST
+  starts the USB flash mode.)
   If the saved Wi-Fi is gone for 3 minutes, the hotspot opens as well, and keeps retrying.
 
   Arduino IDE: board "ESP32S3 Dev Module", Flash Size 16MB, Partition Scheme
@@ -129,11 +131,12 @@ static void ledLoop() {
 // ---------------- serial console (bench testing) ----------------
 
 static void printStatus() {
-  Serial.printf("SMS Gateway %s, id %s, up %lu s, free heap %u\n", FW_VERSION, deviceId().c_str(),
-                (unsigned long)(millis() / 1000), ESP.getFreeHeap());
+  Serial.printf("SMS Gateway %s, id %s, key %s, up %lu s, free heap %u\n", FW_VERSION, deviceId().c_str(),
+                settings.keyFormatted().c_str(), (unsigned long)(millis() / 1000), ESP.getFreeHeap());
   Serial.printf("Wi-Fi: %s %s, server %s: %s\n", settings.ssid.c_str(),
                 WiFi.isConnected() ? WiFi.localIP().toString().c_str() : "(not connected)", settings.server.c_str(),
                 cloud::online() ? "online" : cloud::lastError().c_str());
+  if (cloud::notAdded()) Serial.printf("-> add this gateway in the panel under Devices with key %s\n", settings.keyFormatted().c_str());
   for (Modem *m : {&modem1, &modem2}) {
     Serial.printf("SIM%u: %s, SIM %s, operator %s, CSQ %d, reg %d, %d mV, IMEI %s, queue %u\n", m->slot,
                   m->stateName(), m->simStatus.c_str(), m->op.c_str(), m->csq, m->reg, m->mv, m->imei.c_str(),
@@ -207,6 +210,8 @@ void setup() {
     Serial.println("not set up yet");
     portal::start(false);
   }
+  settings.ensureKey();  // after Wi-Fi is on: the radio makes the random numbers truly random
+  Serial.printf("device key %s (add it in the panel under Devices)\n", settings.keyFormatted().c_str());
 }
 
 void loop() {

@@ -12,8 +12,12 @@ panel with hand-drawn SVG charts. One container, one SQLite file.
   - Missed calls.
   - Signal charts: mobile signal, Wi-Fi, SIM800L supply voltage.
   - Analytics: per day, per SIM, top senders and callers.
-  - Device: restart the gateway or one SIM800L, an AT command console, the event log.
+  - Devices: add a gateway by its key, restart it or one SIM800L, an AT command console, the event log.
   - Settings.
+- **Pairing**: each gateway makes its own device key (like `K7Q2-M9XD-4TPA-W3HZ`) and shows it on its
+  setup page and screen. You add the key under Devices. The server keeps only a hash of it. On the
+  gateway's first check-in, the key is tied to that ESP32, so a copied key does not work on another
+  board. Removing a gateway stops its key at once.
 - **Gateway link**: the ESP32 posts to `POST /api/device/sync` every 5 s. It sends its status,
   received SMS as raw PDUs, missed calls and job results. It gets back jobs: SMS as ready-made PDUs,
   AT commands, restart, open the setup hotspot. All SMS encoding happens here: GSM-7 and UCS-2
@@ -37,15 +41,17 @@ panel with hand-drawn SVG charts. One container, one SQLite file.
    | Variable | |
    |---|---|
    | `ADMIN_PASSWORD` | Panel password. Set it. If missing, one is generated and printed in the deploy log. |
-   | `DEVICE_KEY` | Optional. The key the gateway uses. If missing, one is generated; see it in Settings. |
    | `API_KEY` | Optional. Key for `/api/v1`. If missing, one is generated; Settings can make a new one. |
    | `SESSION_SECRET` | Optional. Signs the login cookie. Generated if missing. |
    | `PORT` | Default `3000`. |
    | `DATA_DIR` | Default `/data`. |
 
 5. **Deploy**, open the domain and log in.
-6. Open **Settings → Connect a gateway** and copy the server address and device key into the
-   gateway's setup page.
+6. Connect a gateway:
+   1. On its setup page (Wi-Fi `SMS-Gateway-XXXX`), enter this server's address.
+   2. Copy the device key the page shows.
+   3. In the panel, open **Devices → Add a gateway** and paste the key. The gateway shows up within
+      a few seconds.
 
 The image has a health check on `GET /health`.
 
@@ -125,6 +131,6 @@ or stop the container first.
 | `src/pdu.js` | SMS PDU encode and decode |
 | `src/shared/gsm.js` | GSM-7 alphabet and SMS length rules; the panel uses it too |
 | `src/db.js` | SQLite schema and settings |
-| `src/auth.js` | Panel login, device key, API key |
+| `src/auth.js` | Panel login, gateway keys (add, check, tie to one board), API key |
 | `src/webhook.js` | Signed webhooks with retries |
 | `public/` | The panel: `index.html`, `app.css`, `js/` |

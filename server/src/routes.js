@@ -1,4 +1,4 @@
-import { db, setting, setSetting } from './db.js';
+import { db, setting, setSetting, tx, log } from './db.js';
 import { Router, HttpError, readJson, intParam } from './http.js';
 import * as auth from './auth.js';
 import {
@@ -11,8 +11,11 @@ export const router = new Router();
 // ---------- device ----------
 
 router.post('/api/device/sync', async (req) => {
-  auth.requireDevice(req);
-  return handleSync(await readJson(req, 512 * 1024));
+  const body = await readJson(req, 512 * 1024);
+  const id = String(body.id || '');
+  if (!/^[A-Za-z0-9_-]{4,32}$/.test(id)) throw new HttpError(400, 'Bad device id');
+  auth.authenticateDevice(req, id);
+  return handleSync(body);
 });
 
 // ---------- panel auth ----------
@@ -23,19 +26,32 @@ router.get('/api/auth/me', (req) => ({ loggedIn: auth.isLoggedIn(req) }));
 
 // ---------- shared queries ----------
 
-function devicesWithSims(now = Date.now()) {
+// Every gateway added in the panel, with its live status once it has checked in.
+function gatewayList(now = Date.now()) {
   const sims = db.prepare('SELECT * FROM sims ORDER BY slot').all();
+  const devices = new Map(db.prepare('SELECT * FROM devices').all().map((d) => [d.id, d]));
   return db
-    .prepare('SELECT * FROM devices ORDER BY first_seen')
+    .prepare('SELECT * FROM device_keys ORDER BY added_at')
     .all()
-    .map((d) => ({
-      ...d,
-      online: now - d.last_seen < ONLINE_MS,
-      sims: sims
-        .filter((s) => s.device_id === d.id)
-        .map((s) => ({ ...s, dbm: csqToDbm(s.csq), ready: s.state === 'ready' && (s.reg === 1 || s.reg === 5) })),
-    }));
+    .map((k) => {
+      const d = k.device_id ? devices.get(k.device_id) : null;
+      return {
+        ...(d || {}),
+        id: d ? d.id : null,
+        key_id: k.id,
+        hint: k.hint,
+        added_at: k.added_at,
+        name: k.name || d?.name || 'SMS Gateway',
+        connected: !!d,
+        online: !!d && now - d.last_seen < ONLINE_MS,
+        sims: !d ? [] : sims
+          .filter((s) => s.device_id === d.id)
+          .map((s) => ({ ...s, dbm: csqToDbm(s.csq), ready: s.state === 'ready' && (s.reg === 1 || s.reg === 5) })),
+      };
+    });
 }
+
+const devicesWithSims = (now = Date.now()) => gatewayList(now).filter((g) => g.connected);
 
 function listMessages(q, { asc = false } = {}) {
   const where = [];
@@ -87,9 +103,12 @@ router.get('/api/overview', panel(() => {
     .get(since);
   const pending = db.prepare("SELECT COUNT(*) n FROM messages WHERE direction = 'out' AND status IN ('queued', 'sending')").get().n;
   const calls = db.prepare('SELECT COUNT(*) n FROM calls WHERE ts > ?').get(since).n;
+  const gateways = gatewayList(now);
   return {
     now,
-    devices: devicesWithSims(now),
+    devices: gateways.filter((g) => g.connected),
+    waiting: gateways.filter((g) => !g.connected).map((g) => ({ key_id: g.key_id, hint: g.hint, name: g.name, added_at: g.added_at })),
+    knocking: auth.waitingGateways(now),
     last24h: { received: c.received || 0, sent: c.sent || 0, failed: c.failed || 0, calls, pending },
     messages: listMessages({ limit: 6 }).items,
     calls: listCalls({ limit: 5 }).items,
@@ -111,7 +130,9 @@ router.get('/api/signals', panel((req) => {
   const hours = intParam(req.query.hours, 24, 1, 24 * 30);
   const since = Date.now() - hours * 3600_000;
   const bucket = Math.max(60_000, Math.round((hours * 3600_000) / 360)); // <= ~360 points per line
-  const devices = db.prepare('SELECT id, name FROM devices ORDER BY first_seen').all();
+  const devices = db
+    .prepare('SELECT d.id, COALESCE(k.name, d.name) name FROM devices d JOIN device_keys k ON k.device_id = d.id ORDER BY d.first_seen')
+    .all();
   const device = req.query.device || devices[0]?.id;
   const rows = db
     .prepare(
@@ -185,12 +206,26 @@ router.get('/api/logs', panel((req) => {
   return { items: rows.slice(0, limit), more: rows.length > limit };
 }));
 
-router.get('/api/devices', panel(() => devicesWithSims()));
+router.get('/api/devices', panel(() => ({ gateways: gatewayList(), waiting: auth.waitingGateways() })));
+router.post('/api/devices', panel(async (req) => {
+  const b = await readJson(req);
+  const keyId = auth.addDeviceKey(b.key, b.name);
+  return gatewayList().find((g) => g.key_id === keyId);
+}));
 router.post('/api/devices/:id/jobs', panel(async (req) => createJob(req.params.id, await readJson(req))));
-router.delete('/api/devices/:id', panel((req) => {
-  const id = req.params.id;
-  for (const t of ['sims', 'samples']) db.prepare(`DELETE FROM ${t} WHERE device_id = ?`).run(id);
-  db.prepare('DELETE FROM devices WHERE id = ?').run(id);
+// Remove a gateway: its key stops working at once. Messages and calls stay.
+router.delete('/api/devices/key/:kid', panel((req) => {
+  const k = db.prepare('SELECT * FROM device_keys WHERE id = ?').get(Number(req.params.kid));
+  if (!k) notFound();
+  tx(() => {
+    db.prepare('DELETE FROM device_keys WHERE id = ?').run(k.id);
+    if (k.device_id) {
+      for (const t of ['sims', 'samples']) db.prepare(`DELETE FROM ${t} WHERE device_id = ?`).run(k.device_id);
+      db.prepare('DELETE FROM devices WHERE id = ?').run(k.device_id);
+      db.prepare("UPDATE jobs SET status = 'failed', result = 'Gateway removed' WHERE device_id = ? AND status IN ('queued', 'sent')").run(k.device_id);
+    }
+  });
+  log(`Gateway with key …${k.hint} removed`);
   return { ok: true };
 }));
 router.get('/api/jobs/:id', panel((req) => getJob(Number(req.params.id)) ?? notFound()));
@@ -202,8 +237,6 @@ function settingsView(req) {
     webhook_url: setting('webhook_url', ''),
     webhook_secret: webhookSecret(),
     webhook_events: EVENTS,
-    device_key: auth.deviceKey(),
-    device_key_from_env: !!process.env.DEVICE_KEY,
     api_key: auth.apiKey(),
     api_key_from_env: !!process.env.API_KEY,
     server_url: `${proto}://${req.headers['x-forwarded-host'] || req.headers.host}`,

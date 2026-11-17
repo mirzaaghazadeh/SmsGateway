@@ -51,8 +51,17 @@ static void handleInfo() {
   d["server"] = settings.server;
   d["name"] = settings.name;
   d["insecure"] = settings.insecure;
-  d["hasPass"] = settings.pass.length() > 0;  // secrets are never sent back
-  d["hasKey"] = settings.key.length() > 0;
+  d["hasPass"] = settings.pass.length() > 0;  // the Wi-Fi password is never sent back
+  d["key"] = settings.keyFormatted();         // the owner copies this into the panel
+  sendJson(d);
+}
+
+static void handleNewKey() {
+  lastVisit = millis();
+  settings.newKey();
+  Serial.printf("setup: new device key %s\n", settings.keyFormatted().c_str());
+  JsonDocument d;
+  d["key"] = settings.keyFormatted();
   sendJson(d);
 }
 
@@ -100,21 +109,19 @@ static void handleSave() {
   lastVisit = millis();
   String ssid = server.arg("ssid");
   String srv = server.arg("server");
-  String key = server.arg("key");
   String name = server.arg("name");
   ssid.trim();
   srv.trim();
-  key.trim();
   name.trim();
   if (!ssid.length()) return fail("Choose your Wi-Fi network.");
-  if (!srv.startsWith("http://") && !srv.startsWith("https://")) return fail("The server address must start with https:// (or http://).");
-  if (!key.length() && !settings.key.length()) return fail("Paste the device key from the panel.");
+  if (!srv.startsWith("http://") && !srv.startsWith("https://")) srv = "https://" + srv;  // "sms.example.com" is fine too
+  while (srv.endsWith("/")) srv.remove(srv.length() - 1);
+  if (srv.length() < 12 || srv.indexOf('.') < 0) return fail("Enter your server address, like https://sms.example.com");
 
   bool sameNet = ssid == settings.ssid;
   settings.ssid = ssid;
   if (server.arg("pass").length() || !sameNet) settings.pass = server.arg("pass");
   settings.server = srv;
-  if (key.length()) settings.key = key;
   settings.name = name.length() ? name : String("SMS Gateway");
   settings.insecure = server.arg("insecure") == "1";
   settings.save();
@@ -149,6 +156,7 @@ void start(bool autoClose) {
     server.on("/info", HTTP_GET, handleInfo);
     server.on("/scan", HTTP_GET, handleScan);
     server.on("/save", HTTP_POST, handleSave);
+    server.on("/newkey", HTTP_POST, handleNewKey);
     server.on("/status", HTTP_GET, handleStatus);
     server.onNotFound(redirect);
     routes = true;

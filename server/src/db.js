@@ -35,6 +35,13 @@ CREATE TABLE IF NOT EXISTS devices (
   offline INTEGER NOT NULL DEFAULT 0
 );
 
+-- Gateways the owner added in the panel. Each ESP32 makes its own key and shows it on its setup
+-- page; the server keeps only a hash. device_id is filled in on the gateway's first check-in.
+CREATE TABLE IF NOT EXISTS device_keys (
+  id INTEGER PRIMARY KEY, key_hash TEXT UNIQUE NOT NULL, hint TEXT NOT NULL, name TEXT,
+  device_id TEXT UNIQUE, added_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sims (
   device_id TEXT NOT NULL, slot INTEGER NOT NULL, state TEXT, sim TEXT, imei TEXT, iccid TEXT,
   operator TEXT, csq INTEGER, reg INTEGER, mv INTEGER, queue INTEGER, updated_at INTEGER,

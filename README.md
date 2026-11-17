@@ -151,9 +151,10 @@ Full guide: [firmware/sms_gateway/README.md](firmware/sms_gateway/README.md).
 - Board "ESP32S3 Dev Module", Flash 16MB, Partition "16M Flash (3MB APP/9.9MB FATFS)", PSRAM "OPI
   PSRAM". Upload through the USB-C port marked COM.
 - **First setup**: the gateway opens a `SMS-Gateway-XXXX` hotspot (password `smsgateway`). Join it
-  with your phone, choose your Wi-Fi and paste the server address and device key from the panel
-  (Settings → Connect a gateway).
-- **Hold BOOT for 5 s** to erase the Wi-Fi and server settings and open the setup hotspot again.
+  with your phone, choose your Wi-Fi and enter your server address. The page and the OLED show the
+  gateway's own **device key**: add it in the panel under Devices → Add a gateway.
+- **Hold BOOT for 5 s** to erase the Wi-Fi and server settings and open the setup hotspot again
+  (the device key stays, so the panel keeps knowing the gateway).
 
 ### Bench test: `firmware/sim800_test/`
 
@@ -180,12 +181,12 @@ npm test
 | Env var | |
 |---|---|
 | `ADMIN_PASSWORD` | panel login; if unset, one is generated and printed in the logs |
-| `DEVICE_KEY`, `API_KEY` | optional; generated and shown in the panel's Settings if unset |
+| `API_KEY` | optional; generated and shown in the panel's Settings if unset |
 | `SESSION_SECRET` | optional |
 | `PORT`, `DATA_DIR` | default 3000 and `./data` (`/data` in Docker) |
 
-**Device protocol**: the ESP32 sends `POST /api/device/sync` with `Authorization: Bearer <DEVICE_KEY>`
-every few seconds, with device and SIM status plus events (incoming SMS as raw PDUs, missed calls,
+**Device protocol**: the ESP32 sends `POST /api/device/sync` with `Authorization: Bearer <its device key>`
+(the key the gateway made itself and the owner added under Devices) every few seconds, with device and SIM status plus events (incoming SMS as raw PDUs, missed calls,
 job results). The reply carries the jobs to run (outgoing SMS as ready-made PDUs, AT commands,
 restart). All SMS encoding and decoding (GSM-7 / UCS-2, multipart) happens on the server.
 

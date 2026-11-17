@@ -3,9 +3,11 @@ import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 
 export class HttpError extends Error {
-  constructor(status, message) {
+  // `code` is a short machine-readable reason (the gateway firmware reads it), sent next to `error`.
+  constructor(status, message, code) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 

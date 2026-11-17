@@ -42,7 +42,9 @@ const server = createServer(async (req, res) => {
   } catch (e) {
     const status = e instanceof HttpError ? e.status : 500;
     if (status === 500) console.error(e);
-    if (!res.headersSent) sendJson(res, status, { error: status === 500 ? 'Server error' : e.message });
+    if (!res.headersSent) {
+      sendJson(res, status, { error: status === 500 ? 'Server error' : e.message, ...(e.code && status !== 500 ? { code: e.code } : {}) });
+    }
     else res.end();
   }
 });

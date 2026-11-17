@@ -25,9 +25,19 @@ button.link{background:none;color:var(--accent);min-height:0;padding:6px 2px;fon
 details{font-size:.88rem;color:var(--muted)}summary{cursor:pointer;padding:4px 0}
 #msg{padding:14px;border-radius:8px;border:1px solid var(--line);display:none}#msg.bad{border-color:var(--bad);color:var(--bad)}
 .hide{display:none}
+.key{border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:20px}
+.key p{margin:0}#kh{font-size:.88rem;font-weight:600;color:var(--muted);margin-bottom:8px}
+.key input{font:600 1.2rem/1 ui-monospace,"SF Mono",Menlo,monospace;letter-spacing:.04em;text-align:center}
+.key button{min-height:44px}.key .hint{margin-top:8px}
+details .link{display:block;margin-top:10px}
 </style></head><body>
 <header><h1>SMS Gateway setup</h1><p id="dev">&nbsp;</p></header>
 <main>
+<section class="key" aria-labelledby="kh">
+ <p id="kh">Device key</p>
+ <div class="row"><input id="key" readonly aria-labelledby="kh"><button type="button" id="copy">Copy</button></div>
+ <p class="hint" id="khint">Add this key in your panel: Devices, then Add a gateway. It is also on the gateway screen.</p>
+</section>
 <form id="f" autocomplete="off">
  <label>Wi-Fi network
   <span class="row"><select id="net"><option value="">Searching for networks…</option></select>
@@ -39,16 +49,14 @@ details{font-size:.88rem;color:var(--muted)}summary{cursor:pointer;padding:4px 0
   <span class="check hint"><input type="checkbox" id="show"> show password</span>
  </label>
  <label>Server address
-  <input id="server" type="url" inputmode="url" placeholder="https://sms.example.com" required>
-  <span class="hint">The address of your panel, from Settings in the panel.</span>
- </label>
- <label>Device key
-  <input id="key" spellcheck="false" autocapitalize="off">
-  <span class="hint">Shown in the panel under Settings, "Connect a gateway".</span>
+  <input id="server" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://sms.example.com" required>
+  <span class="hint">The address of your panel.</span>
  </label>
  <label>Name <input id="name" maxlength="32" placeholder="SMS Gateway"></label>
  <details><summary>Advanced</summary>
   <label class="check"><input type="checkbox" id="insecure"> Skip the HTTPS certificate check (only for a self-signed certificate)</label>
+  <button type="button" class="link" id="newkey">Make a new device key</button>
+  <span class="hint">Only when the gateway gets a new owner: the old key stops working in the panel.</span>
  </details>
  <div id="msg" role="status"></div>
  <button id="save">Save and connect</button>
@@ -77,17 +85,28 @@ async function scan(again){
 $('net').onchange=()=>$('ssid').classList.toggle('hide',$('net').value!=='__other');
 $('again').onclick=()=>scan(true);
 $('show').onchange=e=>$('pass').type=e.target.checked?'text':'password';
+$('copy').onclick=async()=>{
+  const k=$('key');let ok=false;
+  try{await navigator.clipboard.writeText(k.value);ok=true}catch(e){}
+  if(!ok){k.focus();k.select();k.setSelectionRange(0,99);try{ok=document.execCommand('copy')}catch(e){}}
+  $('copy').textContent=ok?'Copied':'Copy';
+  if(!ok)$('khint').textContent='Copying is blocked here: press and hold the key to copy it, or type it from the gateway screen.';
+};
+$('newkey').onclick=async()=>{
+  if(!confirm('Make a new device key? The panel then has to add the gateway again with the new key.'))return;
+  const r=await fetch('/newkey',{method:'POST'}).then(r=>r.json()).catch(()=>null);
+  if(r){$('key').value=r.key;$('copy').textContent='Copy'}
+};
 fetch('/info').then(r=>r.json()).then(d=>{
-  info=d;$('dev').textContent='ID '+d.id+' · firmware '+d.fw;
+  info=d;$('dev').textContent='ID '+d.id+' · firmware '+d.fw;$('key').value=d.key;
   $('server').value=d.server||'';$('name').value=d.name||'';$('insecure').checked=!!d.insecure;
   if(d.hasPass)$('pass').placeholder='saved (leave empty to keep)';
-  if(d.hasKey)$('key').placeholder='saved (leave empty to keep)';
   scan(false);
 });
 $('f').onsubmit=async e=>{
   e.preventDefault();
   const ssid=$('net').value==='__other'?$('ssid').value.trim():$('net').value;
-  const body=new URLSearchParams({ssid,pass:$('pass').value,server:$('server').value.trim(),key:$('key').value.trim(),name:$('name').value.trim(),insecure:$('insecure').checked?'1':'0'});
+  const body=new URLSearchParams({ssid,pass:$('pass').value,server:$('server').value.trim(),name:$('name').value.trim(),insecure:$('insecure').checked?'1':'0'});
   $('save').disabled=true;msg('Saving…');
   try{
     const r=await fetch('/save',{method:'POST',body}).then(r=>r.json());
@@ -97,7 +116,7 @@ $('f').onsubmit=async e=>{
       await new Promise(r=>setTimeout(r,1000));
       const s=await fetch('/status').then(r=>r.json()).catch(()=>null);
       if(!s)continue;
-      if(s.state==='connected'){msg('Connected to '+ssid+' (address '+s.ip+'). The gateway restarts now and shows up in your panel within a minute. You can leave this Wi-Fi.');return}
+      if(s.state==='connected'){msg('Connected to '+ssid+' (address '+s.ip+'). Last step: in your panel open Devices and add the key '+$('key').value+'. The gateway restarts now; you can leave this Wi-Fi.');return}
       if(s.state==='failed'){msg('Could not join '+ssid+'. Check the password and try again.',true);$('save').disabled=false;return}
     }
     msg('No answer. If the gateway screen shows your Wi-Fi, it worked; otherwise join this hotspot again.',true);

@@ -13,7 +13,7 @@ export default function overview(page) {
   const open = new Set();
   return poll(async () => {
     const o = await api('/api/overview');
-    clear(body, o.devices.length ? dashboard(o, open) : await onboarding());
+    clear(body, o.devices.length ? dashboard(o, open) : await onboarding(o));
   }, 5000);
 }
 
@@ -41,7 +41,7 @@ function dashboard(o, open) {
         panel('Missed calls', h('a', { href: '/calls', class: 'small' }, 'All calls'),
           o.calls.length ? h('ul', { class: 'list' }, o.calls.map(callRow)) : emptyState('calls', 'No calls yet')
         ),
-        panel('Events', h('a', { href: '/device', class: 'small' }, 'Full log'),
+        panel('Events', h('a', { href: '/devices', class: 'small' }, 'Full log'),
           o.logs.length ? logList(o.logs) : emptyState('terminal', 'Nothing logged yet')
         )
       )
@@ -70,7 +70,7 @@ function gateway(dev, now) {
           fact('Last restart', dev.reset_reason || '–')
         )
       ),
-      h('a', { class: 'btn', href: '/device' }, icon('device'), 'Device tools')
+      h('a', { class: 'btn', href: '/devices' }, icon('device'), 'Device tools')
     ),
     h('div', { class: 'sims' }, sims),
   ];
@@ -80,27 +80,36 @@ function fact(label, value) {
   return h('div', { class: 'fact' }, h('span', {}, label), h('b', {}, value));
 }
 
-async function onboarding() {
+async function onboarding(o) {
+  // keys added but no check-in yet: tell what to finish on the gateway
+  if (o.waiting.length) {
+    return panel('Waiting for your gateway', h('a', { href: '/devices', class: 'small' }, 'Devices'),
+      h('div', { class: 'panel-body form' },
+        h('p', {}, 'Added: ', o.waiting.map((w, i) => [i ? ', ' : '', h('b', {}, w.name), ' (key …', h('span', { class: 'mono' }, w.hint), ')']),
+          '. It shows up here a few seconds after it checks in.'),
+        h('p', { class: 'muted' }, 'Nothing yet? Check the gateway screen: it shows whether Wi-Fi works and what the server answered. ',
+          'The server address on its setup page must be this panel\'s address.')
+      )
+    );
+  }
   let st = {};
   try {
     st = await api('/api/settings');
   } catch {}
-  const line = (label, value) =>
-    h('div', { class: 'field' }, h('span', { class: 'label' }, label),
-      h('div', { class: 'secret' }, h('input', { class: 'input', readonly: true, value: value || '' }),
-        h('button', { class: 'btn', type: 'button', onclick: () => copy(value) }, icon('copy'), 'Copy')));
-  return panel('Connect your gateway', null,
+  return panel('Connect your first gateway', null,
     h('div', { class: 'panel-body split even' },
       h('ol', { class: 'steps' },
-        h('li', {}, 'Power the gateway. On its first start it opens a Wi-Fi hotspot called ', h('b', {}, 'SMS-Gateway-…'), ' (password ', h('code', {}, 'smsgateway'), '). The OLED shows the name.'),
-        h('li', {}, 'Join that hotspot with your phone. The setup page opens by itself; if not, open ', h('code', {}, 'http://192.168.4.1'), '.'),
-        h('li', {}, 'Pick your Wi-Fi, type its password, and paste the server address and device key shown here.'),
-        h('li', {}, 'Save. The gateway restarts, joins your Wi-Fi and shows up on this page within a few seconds.')
+        h('li', {}, 'Power the gateway. Until it is set up it opens a Wi-Fi called ', h('b', {}, 'SMS-Gateway-…'), ' (password ', h('code', {}, 'smsgateway'), '); its screen shows the name.'),
+        h('li', {}, 'Join that Wi-Fi with your phone. The setup page opens by itself; if not, open ', h('code', {}, 'http://192.168.4.1'), '.'),
+        h('li', {}, 'Choose your Wi-Fi and enter the server address shown here. Save.'),
+        h('li', {}, 'Copy the device key from the setup page (it is also on the gateway screen) and add it under Devices.')
       ),
       h('div', { class: 'form' },
-        line('Server address', st.server_url),
-        line('Device key', st.device_key),
-        h('p', { class: 'hint' }, 'To change Wi-Fi later, hold the BOOT button on the ESP32 for 5 seconds: it forgets its settings and opens the hotspot again.')
+        h('div', { class: 'field' }, h('span', { class: 'label' }, 'Server address'),
+          h('div', { class: 'secret' }, h('input', { class: 'input', readonly: true, value: st.server_url || '', 'aria-label': 'Server address' }),
+            h('button', { class: 'btn', type: 'button', onclick: () => copy(st.server_url) }, icon('copy'), 'Copy'))),
+        h('div', { class: 'row' }, h('a', { class: 'btn primary', href: '/devices' }, icon('plus'), 'Add the gateway')),
+        h('p', { class: 'hint' }, 'To change Wi-Fi later, hold the BOOT button on the ESP32 for 5 seconds: it forgets Wi-Fi and server, keeps its key, and opens the setup Wi-Fi again.')
       )
     )
   );

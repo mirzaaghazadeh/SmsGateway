@@ -20,7 +20,7 @@ static WiFiClient plain;
 static HTTPClient http;
 static String url;
 static bool https = false, started = false;
-static bool okLast = false, reboot = false, setup = false;
+static bool okLast = false, reboot = false, setup = false, notAddedFlag = false;
 static String err = "not connected yet";
 static uint32_t nextAt = 0, lastOk = 0, lastTry = 0, interval = SYNC_INTERVAL_MS;
 static uint8_t fails = 0;
@@ -174,8 +174,18 @@ static bool sync() {
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Authorization", "Bearer " + settings.key);
   int code = http.POST(body);
+  notAddedFlag = false;
   if (code != 200) {
-    if (code == 401) err = "wrong device key";
+    String reason;
+    if (code == 401 || code == 403) {  // the server says why in {"error": ..., "code": ...}
+      JsonDocument e;
+      if (!deserializeJson(e, http.getString())) reason = (const char *)(e["code"] | "");
+    }
+    if (reason == "not_added") {
+      err = "add key in panel";
+      notAddedFlag = true;
+    } else if (reason == "key_in_use") err = "key used by another board";
+    else if (code == 401 || code == 403) err = "key refused";
     else if (code == 404) err = "wrong server address (404)";
     else if (code < 0) err = HTTPClient::errorToString(code);
     else err = "server error " + String(code);
@@ -225,14 +235,23 @@ void loop() {
     fails = 0;
     nextAt = millis() + interval;
   } else {
-    if (okLast || fails == 0) Serial.printf("server: %s (%s)\n", err.c_str(), url.c_str());
+    if (okLast || fails == 0) {
+      Serial.printf("server: %s (%s)\n", err.c_str(), url.c_str());
+      if (notAddedFlag) Serial.printf("add this gateway in the panel under Devices, key %s\n", settings.keyFormatted().c_str());
+    }
     okLast = false;
-    if (fails < 5) fails++;
-    nextAt = millis() + min<uint32_t>(30000, 1000u << fails);
+    if (notAddedFlag) {
+      fails = 1;
+      nextAt = millis() + 5000;  // keep asking: it gets in a few seconds after the key is added
+    } else {
+      if (fails < 5) fails++;
+      nextAt = millis() + min<uint32_t>(30000, 1000u << fails);
+    }
   }
 }
 
 bool online() { return okLast && millis() - lastOk < 3 * interval + 10000; }
+bool notAdded() { return notAddedFlag && !okLast; }
 String lastError() { return err; }
 bool rebootRequested() { return reboot && events.empty(); }  // after the panel has the answer
 bool setupRequested() {

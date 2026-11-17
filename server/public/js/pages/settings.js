@@ -20,9 +20,9 @@ export default function settings(page) {
     clear(body,
       h('div', { class: 'split even' },
         panel('Connect a gateway', null, h('div', { class: 'panel-body form' },
-          h('p', { class: 'muted' }, 'Type these two values into the gateway setup page (the "SMS-Gateway-…" Wi-Fi hotspot).'),
+          h('p', { class: 'muted' }, 'Enter this address on the gateway setup page (the "SMS-Gateway-…" Wi-Fi). Then add the key the gateway shows under Devices.'),
           secret('Server address', st.server_url),
-          secret('Device key', st.device_key, st.device_key_from_env ? 'Set by DEVICE_KEY on the server.' : 'Set DEVICE_KEY on the server to choose your own.')
+          h('div', { class: 'row' }, h('a', { class: 'btn', href: '/devices' }, icon('device'), 'Devices'))
         )),
         panel('Incoming calls', null, h('div', { class: 'panel-body form' }, callMode(st)))
       ),

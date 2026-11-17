@@ -77,8 +77,7 @@ export function handleSync(body, now = Date.now()) {
     const dev = db.prepare('SELECT * FROM devices WHERE id = ?').get(id);
     const boot = int(body.boot);
     const wifi = body.wifi || {};
-    if (!dev) log(`New gateway connected: ${body.name || id}`, { device_id: id });
-    else {
+    if (dev) {
       if (dev.boot !== boot) log(`Gateway restarted (${str(body.reset, 40) || 'unknown reason'})`, { device_id: id });
       if (dev.offline) {
         log(`Gateway back online after ${Math.round((now - dev.last_seen) / 60000)} min`, { device_id: id });

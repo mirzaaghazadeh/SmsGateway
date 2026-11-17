@@ -8,6 +8,7 @@ void begin();
 void loop();             // call only while Wi-Fi is connected
 
 bool online();           // last sync worked and is recent
+bool notAdded();         // the server does not know this gateway's key yet: add it in the panel
 String lastError();      // why the last sync failed ("" when fine)
 bool rebootRequested();  // the panel asked for a restart
 bool setupRequested();   // the panel asked to open the setup hotspot (cleared when read)

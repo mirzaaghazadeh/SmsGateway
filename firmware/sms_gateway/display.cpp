@@ -80,23 +80,24 @@ static void simLine(int y, const Modem &m) {
 
 static void drawSetup() {
   bool wifiLost = settings.configured();
-  oled.setTextSize(wifiLost ? 1 : 2);
   oled.setCursor(0, 0);
-  oled.print(wifiLost ? "Wi-Fi not found" : "SETUP");
-  oled.setTextSize(1);
-  oled.setCursor(0, wifiLost ? 13 : 20);
-  oled.print("Join Wi-Fi:");
-  oled.setCursor(0, wifiLost ? 23 : 30);
+  oled.print(wifiLost ? "Wi-Fi not found. Join:" : "SETUP: join Wi-Fi");
+  oled.setCursor(0, 10);
   oled.print(portal::apName());
-  oled.setCursor(0, wifiLost ? 33 : 40);
+  oled.setCursor(0, 20);
   oled.print("pass " AP_PASSWORD);
-  oled.setCursor(0, wifiLost ? 43 : 52);
+  oled.setCursor(0, 30);
   oled.print("open 192.168.4.1");
+  oled.drawFastHLine(0, 41, 128, SSD1306_WHITE);
+  oled.setCursor(0, 45);
   if (wifiLost) {
+    oled.print("still retrying:");
     oled.setCursor(0, 55);
-    oled.print("(retrying ");
-    oled.print(settings.ssid.substring(0, 10));
-    oled.print(")");
+    oled.print(settings.ssid.substring(0, 21));
+  } else {
+    oled.print("Device key:");
+    oled.setCursor(0, 55);
+    oled.print(settings.keyFormatted());
   }
 }
 
@@ -107,6 +108,15 @@ static void drawStatus() {
   oled.drawFastHLine(0, 10, 128, SSD1306_WHITE);
 
   oled.setCursor(0, 14);
+  if (WiFi.isConnected() && cloud::notAdded()) {
+    // the server answered but does not know this gateway yet: show the key to add in the panel
+    oled.print("Add in panel, key:");
+    oled.setCursor(0, 25);
+    oled.print(settings.keyFormatted());
+    simLine(37, modem1);
+    simLine(48, modem2);
+    return;
+  }
   if (!WiFi.isConnected()) {
     oled.print("Wi-Fi: connecting");
   } else if (cloud::online()) {
