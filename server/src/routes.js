@@ -5,7 +5,7 @@ import {
   handleSync, createOutgoing, getMessage, publicMessage, retryMessage, createJob, getJob, csqToDbm, ONLINE_MS,
 } from './gateway.js';
 import { webhookSecret, testWebhook, EVENTS } from './webhook.js';
-import { checkReleases, firmwareView, cachedFirmware, readFirmware, newer } from './firmware.js';
+import { checkReleases, firmwareView, cachedFirmware, readFirmware, newer, maybeCheckReleases } from './firmware.js';
 import { ledSettings, setLedSettings, LED_STATES, LED_MODES } from './led.js';
 
 export const router = new Router();
@@ -17,7 +17,9 @@ router.post('/api/device/sync', async (req) => {
   const id = String(body.id || '');
   if (!/^[A-Za-z0-9_-]{4,32}$/.test(id)) throw new HttpError(400, 'Bad device id');
   auth.authenticateDevice(req, id);
-  return handleSync(body);
+  const answer = handleSync(body);
+  maybeCheckReleases();
+  return answer;
 });
 
 // Firmware image for an update the server offered (GET with the gateway's key).

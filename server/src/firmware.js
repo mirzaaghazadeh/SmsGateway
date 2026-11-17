@@ -116,6 +116,17 @@ export function checkReleases() {
   return running;
 }
 
+// Called on gateway check-ins: check again when the last check is old (6 h), or every 15 min while
+// no release is known yet (for example a server deployed just before the first release was built).
+let lastAuto = 0;
+export function maybeCheckReleases(now = Date.now()) {
+  if (FIRMWARE_REPO === 'none' || running || now - lastAuto < 60_000) return;
+  const every = cachedFirmware() ? 6 * 3600_000 : 15 * 60_000;
+  if (now - Number(setting('fw_checked_at', 0)) < every) return;
+  lastAuto = now;
+  checkReleases().catch(() => {});
+}
+
 export function firmwareSettings() {
   return {
     auto: setting('fw_auto', 'on') === 'on',
