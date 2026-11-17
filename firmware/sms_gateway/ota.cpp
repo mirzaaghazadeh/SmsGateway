@@ -61,7 +61,10 @@ static bool install(String &err, void (*tick)()) {
     http.end();
     return false;
   }
-  if (http.getSize() != (int)size) {
+  // A proxy like Cloudflare may send it "chunked", without a length: then getSize() is -1 and
+  // writeToStream() decodes the chunks. The byte count and SHA-256 are checked at the end anyway.
+  int len = http.getSize();
+  if (len >= 0 && len != (int)size) {
     err = "download has the wrong size";
     http.end();
     return false;
@@ -72,46 +75,49 @@ static bool install(String &err, void (*tick)()) {
     return false;
   }
 
-  mbedtls_sha256_context ctx;
-  mbedtls_sha256_init(&ctx);
-  mbedtls_sha256_starts(&ctx, 0);
-  NetworkClient *stream = http.getStreamPtr();
-  static uint8_t buf[2048];
-  uint32_t got = 0, lastData = millis();
-  int shown = -1;
-  while (got < size) {
-    size_t avail = stream->available();
-    if (avail) {
-      int n = stream->read(buf, min(avail, sizeof(buf)));
-      if (n > 0) {
-        mbedtls_sha256_update(&ctx, buf, n);
-        if (Update.write(buf, n) != (size_t)n) {
-          err = String("write failed: ") + Update.errorString();
-          break;
-        }
-        got += n;
-        lastData = millis();
+  // Receives the decoded bytes: hashes them, writes them to the other app slot, shows progress.
+  struct Sink : public Stream {
+    mbedtls_sha256_context ctx;
+    uint32_t got = 0, total = 0;
+    int shown = -1;
+    bool failed = false;
+    void (*tick)() = nullptr;
+    String version;
+    size_t write(const uint8_t *data, size_t n) override {
+      if (failed) return 0;
+      if (got + n > total || Update.write((uint8_t *)data, n) != n) {
+        failed = true;
+        return 0;
       }
-    } else if (!stream->connected()) {
-      err = "connection closed";
-      break;
-    } else if (millis() - lastData > 20000) {
-      err = "download stalled";
-      break;
-    } else {
-      delay(2);
+      mbedtls_sha256_update(&ctx, data, n);
+      got += n;
+      int pct = got * 100 / total;
+      if (pct / 5 != shown) {
+        shown = pct / 5;
+        display::notice("Updating to " + version, String(pct) + "%  keep it powered", 5000);
+      }
+      tick();  // SIM800L UARTs, status light
+      return n;
     }
-    int pct = got * 100 / size;
-    if (pct / 5 != shown) {
-      shown = pct / 5;
-      display::notice("Updating to " + version, String(pct) + "%  keep it powered", 5000);
-    }
-    tick();  // SIM800L UARTs, status light
-  }
+    size_t write(uint8_t b) override { return write(&b, 1); }
+    int available() override { return 0; }
+    int read() override { return -1; }
+    int peek() override { return -1; }
+    void flush() override {}
+  } sink;
+  sink.total = size;
+  sink.tick = tick;
+  sink.version = version;
+  mbedtls_sha256_init(&sink.ctx);
+  mbedtls_sha256_starts(&sink.ctx, 0);
+  int written = http.writeToStream(&sink);
   http.end();
   uint8_t hash[32];
-  mbedtls_sha256_finish(&ctx, hash);
-  mbedtls_sha256_free(&ctx);
+  mbedtls_sha256_finish(&sink.ctx, hash);
+  mbedtls_sha256_free(&sink.ctx);
+  if (sink.failed) err = String("write failed: ") + Update.errorString();
+  else if (written < 0) err = "download failed: " + HTTPClient::errorToString(written);
+  else if (sink.got != size) err = "download incomplete (" + String(sink.got) + " of " + String(size) + " bytes)";
   if (!err.length() && sha.length()) {
     char hex[65];
     for (int i = 0; i < 32; i++) sprintf(hex + i * 2, "%02x", hash[i]);

@@ -29,13 +29,19 @@ panel with hand-drawn SVG charts. One container, one SQLite file.
 ## Deploy on Coolify
 
 1. **New resource**: point it at this Git repository.
-   - Build pack: **Dockerfile**.
-   - **Base directory: `/server`**.
-   - Port: **3000**.
-2. **Domain**: for example `https://sms.example.com`. Coolify gets the HTTPS certificate. The ESP32
-   checks it against the normal public CA list, so a Let's Encrypt certificate just works.
-3. **Persistent storage**: add a volume mounted at **`/data`**. The database lives there; without
-   the volume every redeploy starts empty.
+   - Build pack: **Docker Compose**.
+   - Base directory: **`/`**.
+   - Docker Compose Location: **`/docker-compose.yaml`**.
+2. **Domain** of the `gateway` service: your address **with the port**, for example
+   `https://sms.example.com:3000`. The `:3000` only tells Coolify where the app listens; visitors and
+   the gateway use `https://sms.example.com`. Coolify gets the HTTPS certificate. The ESP32 checks it
+   against the normal public CA list, so Let's Encrypt (or Cloudflare in front) just works.
+3. **Storage** is handled by the compose file: the volume `gateway-data` holds the database at `/data`
+   and stays when you redeploy. Back it up from time to time (see below).
+
+   Using the plain Dockerfile build pack (base directory `/server`, port 3000) instead? Then add
+   Persistent Storage for **`/data`** yourself. Without it every deploy starts with an empty database:
+   added gateways, messages and settings are gone.
 4. **Environment variables**:
 
    | Variable | |

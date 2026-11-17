@@ -3,7 +3,7 @@
 
 // Firmware version (semver). A GitHub release tagged v<FW_VERSION> carries the build; gateways
 // with an older version install it by themselves. Bump it for every release (see AGENTS.md).
-#define FW_VERSION "1.1.1"
+#define FW_VERSION "1.1.2"
 
 // ---- pins (same as ASSEMBLY.md) ----
 // SIM800L 1

@@ -1,0 +1,26 @@
+# SMS Gateway server and web panel.
+#
+# Coolify: New resource -> this Git repository -> Build Pack "Docker Compose",
+#   Base Directory "/", Docker Compose Location "/docker-compose.yaml".
+#   Domain of the "gateway" service: https://sms.example.com:3000 (the :3000 tells Coolify which
+#   port to send traffic to; visitors still use https://sms.example.com). Set ADMIN_PASSWORD.
+#   The "gateway-data" volume keeps the database between deploys.
+#
+# Plain Docker:  ADMIN_PASSWORD=change-me docker compose up -d   -> http://localhost:3000
+#   (set GATEWAY_BIND=0.0.0.0 to reach it from other machines; put HTTPS in front for the gateway)
+services:
+  gateway:
+    build: ./server
+    restart: unless-stopped
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?}
+      API_KEY: ${API_KEY:-}
+      FIRMWARE_REPO: ${FIRMWARE_REPO:-mirzaaghazadeh/SmsGateway}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    volumes:
+      - gateway-data:/data
+    ports:
+      - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_PORT:-3000}:3000"
+
+volumes:
+  gateway-data:

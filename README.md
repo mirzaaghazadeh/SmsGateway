@@ -50,8 +50,8 @@ SIM cards in one small box that stays plugged in at home and takes care of them:
 |---|---|
 | Case v6 | Designed and sliced, **not yet print-tested**. Some sizes are estimated from photos (see below) |
 | Wiring | Documented in [ASSEMBLY.md](ASSEMBLY.md) |
-| Firmware | Gateway firmware compiles (ESP32 core 3.0.7), **not yet run on hardware**. Bench-test sketch included |
-| Server | Web panel, HTTP API, webhooks, 19 passing tests. Not yet run against real hardware |
+| Firmware | Runs on the ESP32-S3: setup hotspot, pairing, server sync, updates over Wi-Fi. **SIM800L modules not yet tested on hardware**. Bench-test sketch included |
+| Server | Web panel, HTTP API, webhooks, firmware updates from GitHub releases, 23 passing tests. Runs with a real gateway |
 
 ## Repository layout
 
@@ -175,8 +175,10 @@ ADMIN_PASSWORD=change-me npm start   # web panel on http://localhost:3000
 npm test
 ```
 
-**Deploy with Docker** (e.g. Coolify): use `server/Dockerfile` (base directory `/server`, port
-3000) and mount a persistent volume at `/data` for the SQLite database.
+**Deploy with Docker Compose** (e.g. Coolify): `docker-compose.yaml` at the repository root builds
+`server/` and keeps the SQLite database in the named volume `gateway-data` (mounted at `/data`), so
+it survives redeploys. In Coolify use the Build Pack "Docker Compose" and set the service domain
+with the port, like `https://sms.example.com:3000`. Plain Docker: `ADMIN_PASSWORD=change-me docker compose up -d`.
 
 | Env var | |
 |---|---|

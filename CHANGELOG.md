@@ -4,6 +4,15 @@ Versions are the gateway firmware versions (`FW_VERSION` in `firmware/sms_gatewa
 is a GitHub release tagged `vX.Y.Z` with the firmware files. Server changes ship with the version they
 were made for; the server deploys from `main`.
 
+## 1.1.2
+
+- Fix: updates over Wi-Fi failed with "download has the wrong size" when the server sits behind
+  Cloudflare, which sends the file in chunks without a length. The gateway now accepts chunked
+  downloads and still checks the size and the SHA-256.
+- **1.1.0 and 1.1.1 cannot update themselves behind Cloudflare: install 1.1.2 once over USB.**
+  Later versions then come over Wi-Fi.
+- Server: `docker-compose.yml` with a named volume for `/data`, so the database survives redeploys.
+
 ## 1.1.1
 
 - Fix: a gateway could stay offline for good after one failed connection (for example right after
