@@ -175,6 +175,22 @@ static bool sync() {
   http.addHeader("Authorization", "Bearer " + settings.key);
   int code = http.POST(body);
   notAddedFlag = false;
+  if (code == 301 || code == 302 || code == 307 || code == 308) {
+    String loc = http.getLocation();
+    http.end();
+    // "http://" saved, but the server only speaks https (Cloudflare, Coolify): switch for good
+    String host = settings.server.substring(7);
+    if (!https && settings.server.startsWith("http://") && loc.startsWith("https://" + host)) {
+      settings.server = "https://" + host;
+      settings.save();
+      Serial.printf("server: it redirects to https, saved %s\n", settings.server.c_str());
+      begin();
+      err = "switching to https";
+    } else {
+      err = "server redirects to " + loc.substring(0, 60);
+    }
+    return false;
+  }
   if (code != 200) {
     String reason;
     if (code == 401 || code == 403) {  // the server says why in {"error": ..., "code": ...}
