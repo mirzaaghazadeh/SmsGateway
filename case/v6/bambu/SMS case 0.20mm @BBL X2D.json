@@ -1,0 +1,17 @@
+{
+    "type": "process",
+    "name": "SMS case 0.20mm @BBL X2D",
+    "inherits": "0.20mm Standard @BBL X2D",
+    "from": "User",
+    "print_settings_id": "SMS case 0.20mm @BBL X2D",
+    "version": "02.08.00.06",
+    "compatible_printers": [
+        "Bambu Lab X2D 0.4 nozzle"
+    ],
+    "wall_loops": "3",
+    "top_shell_layers": "5",
+    "bottom_shell_layers": "4",
+    "sparse_infill_density": "15%",
+    "sparse_infill_pattern": "gyroid",
+    "enable_support": "0"
+}

@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# local tool settings
+.claude/
+
+# server runtime data (SQLite database, generated secrets)
+server/data/
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+
+# Node
+node_modules/
+
+# Arduino / PlatformIO build output
+build/
+.pio/
+
+# Bambu Studio CLI output
+result.json
