@@ -87,6 +87,9 @@ const tf = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digi
 
 export const fullTime = (ts) => (ts ? dtfFull.format(new Date(ts)) : '');
 export const clock = (ts) => tf.format(new Date(ts));
+// hours and minutes in the viewer's own style: "15:00" or "03:00 PM"
+const hmf = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+export const hm = (ts) => hmf.format(new Date(ts));
 export const shortTime = (ts) => dtf.format(new Date(ts));
 
 export function ago(ts, now = Date.now()) {
@@ -143,6 +146,20 @@ const SIM_STATES = {
 export const simState = (st) => SIM_STATES[st] || ['', st || 'Unknown'];
 
 export const REG = { 0: 'Not searching', 1: 'Home network', 2: 'Searching', 3: 'Refused', 4: 'Unknown', 5: 'Roaming' };
+
+// SIM lines ("<device>:<slot>" -> { name, enabled, network }), refreshed with the sidebar status.
+let LINES = {};
+export const setLines = (lines) => (LINES = lines || {});
+function lineOf(slot, device) {
+  if (device && LINES[`${device}:${slot}`]) return LINES[`${device}:${slot}`];
+  return Object.entries(LINES).find(([k]) => k.endsWith(`:${slot}`))?.[1] || null;
+}
+// "Work" or "SIM 1"
+export const simName = (slot, device) => lineOf(slot, device)?.name || `SIM ${slot}`;
+// "Work (SIM 1)" or "SIM 1"
+export const simTag = (slot, device) => (lineOf(slot, device)?.name ? `${lineOf(slot, device).name} (SIM ${slot})` : `SIM ${slot}`);
+// false only when the owner turned the slot off
+export const simOn = (slot, device) => lineOf(slot, device)?.enabled !== false;
 
 const MSG_STATUS = {
   received: ['plain', 'Received'],

@@ -185,7 +185,7 @@ test('a key works for one board only', async () => {
 });
 
 test('API SMS goes out through the gateway', async () => {
-  const sent = await apiCall('POST', '/api/v1/sms', { to: '+90 555 111 2233', text: 'Hello from the API' });
+  const sent = await apiCall('POST', '/api/v1/sms', { to: '+1 555 111 2233', text: 'Hello from the API' });
   assert.equal(sent.status, 201);
   assert.equal(sent.body.status, 'queued');
 
@@ -195,7 +195,7 @@ test('API SMS goes out through the gateway', async () => {
   assert.equal(job.type, 'sms');
   assert.equal(job.slot, 1); // SIM 2 has no card
   const pdu = decodePdu(job.parts[0].pdu);
-  assert.equal(pdu.number, '+905551112233');
+  assert.equal(pdu.number, '+15551112233');
   assert.equal(pdu.text, 'Hello from the API');
 
   await device(status([{ seq: ++seq, t: 'job', job: job.id, ok: true, ref: [12] }]));
@@ -205,7 +205,7 @@ test('API SMS goes out through the gateway', async () => {
 });
 
 test('failed SMS is retried, then fails after 3 attempts', async () => {
-  const sent = await apiCall('POST', '/api/v1/sms', { to: '+905550000000', text: 'retry me', sim: 1 });
+  const sent = await apiCall('POST', '/api/v1/sms', { to: '+15550000000', text: 'retry me', sim: 1 });
   for (let i = 0; i < 3; i++) {
     // not_before delays the retry; the test pushes it back directly through the API is not possible,
     // so wait for the first try only and check the queued state after a failure
@@ -219,15 +219,15 @@ test('failed SMS is retried, then fails after 3 attempts', async () => {
 });
 
 test('incoming SMS (single and two-part) and a missed call', async () => {
-  const pdu1 = deliver('+905557778899', 'Your code is 4321');
+  const pdu1 = deliver('+15557778899', 'Your code is 4321');
   const long = 'L'.repeat(153) + 'end of message';
-  const p1 = deliver('+905557778899', long.slice(0, 153), { ref: 7, total: 2, seq: 1 });
-  const p2 = deliver('+905557778899', long.slice(153), { ref: 7, total: 2, seq: 2 });
+  const p1 = deliver('+15557778899', long.slice(0, 153), { ref: 7, total: 2, seq: 1 });
+  const p2 = deliver('+15557778899', long.slice(153), { ref: 7, total: 2, seq: 2 });
   const events = [
     { seq: ++seq, t: 'sms', slot: 1, idx: 1, pdu: pdu1 },
     { seq: ++seq, t: 'sms', slot: 1, idx: 3, pdu: p2 },
     { seq: ++seq, t: 'sms', slot: 1, idx: 2, pdu: p1 },
-    { seq: ++seq, t: 'call', slot: 1, num: '+905551234567', action: 'rejected', ring: 2100 },
+    { seq: ++seq, t: 'call', slot: 1, num: '+15551234567', action: 'rejected', ring: 2100 },
   ];
   const r = await device(status(events));
   assert.equal(r.body.ack, seq);
@@ -236,13 +236,13 @@ test('incoming SMS (single and two-part) and a missed call', async () => {
   const inbox = await apiCall('GET', '/api/v1/messages?direction=in&since_id=0');
   assert.equal(inbox.body.items.length, 2);
   assert.equal(inbox.body.items[0].text, 'Your code is 4321');
-  assert.equal(inbox.body.items[0].number, '+905557778899');
+  assert.equal(inbox.body.items[0].number, '+15557778899');
   assert.equal(inbox.body.items[1].text, long);
   assert.equal(inbox.body.items[1].parts, 2);
 
   const calls = await apiCall('GET', '/api/v1/calls?since_id=0');
   assert.equal(calls.body.items.length, 1);
-  assert.equal(calls.body.items[0].number, '+905551234567');
+  assert.equal(calls.body.items[0].number, '+15551234567');
 });
 
 test('panel login, overview, stats, signals', async () => {
@@ -259,7 +259,7 @@ test('panel login, overview, stats, signals', async () => {
   const s = await panel('GET', '/api/stats?days=7&tz=Europe/Istanbul');
   assert.equal(s.body.daily.length, 7);
   assert.equal(s.body.totals.received, 2);
-  assert.equal(s.body.topSenders[0].number, '+905557778899');
+  assert.equal(s.body.topSenders[0].number, '+15557778899');
 
   const sig = await panel('GET', '/api/signals?hours=24');
   assert.equal(sig.body.points.length, 1);
@@ -356,17 +356,17 @@ test('Telegram: each SIM line goes to its own chats, a long SMS arrives joined',
   // a 3-part SMS on SIM 1: two parts, out of order, in one check-in; the last part later
   const long = 'A'.repeat(153) + 'B'.repeat(153) + 'C <tag> & done';
   const parts = [long.slice(0, 153), long.slice(153, 306), long.slice(306)]
-    .map((x, i) => deliver('+905557770000', x, { ref: 9, total: 3, seq: i + 1 }));
+    .map((x, i) => deliver('+15557770000', x, { ref: 9, total: 3, seq: i + 1 }));
   await device(status([{ seq: ++seq, t: 'sms', slot: 1, pdu: parts[2] }, { seq: ++seq, t: 'sms', slot: 1, pdu: parts[0] }]));
   // meanwhile SIM 2 gets an SMS and a call
   await device(status([
-    { seq: ++seq, t: 'sms', slot: 2, pdu: deliver('+905551110000', 'Line two') },
-    { seq: ++seq, t: 'call', slot: 2, num: '+905552220000', action: 'rejected', ring: 1500 },
+    { seq: ++seq, t: 'sms', slot: 2, pdu: deliver('+15551110000', 'Line two') },
+    { seq: ++seq, t: 'call', slot: 2, num: '+15552220000', action: 'rejected', ring: 1500 },
   ]));
   await waitFor(() => tgSent.length >= 2);
   assert.deepEqual(tgSent.map((m) => m.chat_id), ['333', '333']); // nothing for SIM 1 while a part is missing
-  assert.match(tgSent[0].text, /^📩 <b>\+905551110000<\/b>\n<i>Home · SIM 2( · Sent [^<]+)?<\/i>\n\nLine two$/);
-  assert.equal(tgSent[1].text, '📞 Missed call from <b>+905552220000</b>\n<i>Home · SIM 2</i>');
+  assert.match(tgSent[0].text, /^📩 <b>\+15551110000<\/b>\n<i>Home · SIM 2( · Sent [^<]+)?<\/i>\n\nLine two$/);
+  assert.equal(tgSent[1].text, '📞 Missed call from <b>+15552220000</b>\n<i>Home · SIM 2</i>');
 
   await device(status([{ seq: ++seq, t: 'sms', slot: 1, pdu: parts[1] }]));
   await waitFor(() => tgSent.length >= 4);
@@ -374,11 +374,50 @@ test('Telegram: each SIM line goes to its own chats, a long SMS arrives joined',
   assert.deepEqual(sim1.map((m) => m.chat_id).sort(), ['-100222', '111']);
   for (const m of sim1) {
     assert.equal(m.parse_mode, 'HTML');
-    assert.match(m.text, /^📩 <b>\+905557770000<\/b>\n<i>Home · SIM 1 · Turkcell · 3 SMS joined( · Sent [^<]+)?<\/i>\n\n/);
+    assert.match(m.text, /^📩 <b>\+15557770000<\/b>\n<i>Home · SIM 1 · Turkcell · 3 SMS joined( · Sent [^<]+)?<\/i>\n\n/);
     assert.ok(m.text.endsWith('A'.repeat(153) + 'B'.repeat(153) + 'C &lt;tag&gt; &amp; done'));
   }
   await new Promise((r) => setTimeout(r, 300));
   assert.equal(tgSent.length, 4); // one Telegram message per chat, not one per SMS part
+});
+
+test('SIM lines: a name, a slot turned off, a chosen network', async () => {
+  const dev = '/api/devices/aabbccddeeff/sims';
+  assert.equal((await panel('PUT', `${dev}/3`, { name: 'x' })).status, 400);
+  assert.equal((await panel('PUT', `${dev}/1`, { network: '12ab' })).status, 400);
+  assert.equal((await panel('PUT', '/api/devices/nope00000000/sims/1', { name: 'x' })).status, 404);
+
+  let r = await panel('PUT', `${dev}/1`, { name: '  Work  ', network: '28601' });
+  assert.deepEqual(r.body, { name: 'Work', enabled: true, network: '28601' });
+  r = await panel('PUT', `${dev}/2`, { enabled: false });
+  assert.equal(r.body.enabled, false);
+
+  // the gateway gets both in its config (older firmware ignores it)
+  const sync = await device({ ...status(), fw: '1.2.0' });
+  assert.deepEqual(sync.body.config.sims, { 1: { on: true, net: '28601' }, 2: { on: false, net: 'auto' } });
+  const d = await panel('GET', '/api/devices');
+  assert.deepEqual(d.body.lines['aabbccddeeff:1'], { name: 'Work', enabled: true, network: '28601' });
+  assert.equal(d.body.gateways[0].lines[2].enabled, false);
+  // Telegram lists only the lines that are on, with their name
+  const t = await panel('GET', '/api/telegram');
+  assert.deepEqual(t.body.lines.map((l) => `${l.slot} ${l.name}`), ['1 Work']);
+  const st = await apiCall('GET', '/api/v1/status');
+  assert.equal(st.body[0].sims.find((x) => x.sim === 1).name, 'Work');
+
+  await panel('PUT', `${dev}/1`, { name: '', network: 'auto' });
+  await panel('PUT', `${dev}/2`, { enabled: true });
+  assert.deepEqual((await device(status())).body.config.sims, { 1: { on: true, net: 'auto' }, 2: { on: true, net: 'auto' } });
+});
+
+test('a reading of 0 from the gateway (none yet) is stored as missing', async () => {
+  const s = status();
+  s.wifi.rssi = 0;
+  s.sims[1].mv = 0;
+  await device(s);
+  const d = await panel('GET', '/api/devices');
+  assert.equal(d.body.gateways[0].wifi_rssi, null);
+  assert.equal(d.body.gateways[0].sims.find((x) => x.slot === 2).mv, null);
+  await device(status());
 });
 
 test('removing a gateway locks it out', async () => {

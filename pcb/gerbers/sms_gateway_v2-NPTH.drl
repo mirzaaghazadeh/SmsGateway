@@ -1,0 +1,15 @@
+M48
+; SMS gateway v2 carrier PCB
+; #@! TF.FileFunction,NonPlated,1,2,NPTH
+FMAT,2
+METRIC
+T1C3.200
+%
+G90
+G05
+T1
+X4.000Y96.000
+X96.500Y83.000
+X3.500Y3.500
+X96.500Y3.500
+M30

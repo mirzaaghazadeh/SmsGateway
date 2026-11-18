@@ -4,6 +4,7 @@
 import { db, setting, setSetting, log } from './db.js';
 import { HttpError } from './http.js';
 import { smsMessages, callMessage, parseChatIds, CHAT_RE } from './tgformat.js';
+import { simLabel } from './lines.js';
 
 const API = (process.env.TELEGRAM_API || 'https://api.telegram.org').replace(/\/+$/, '');
 const TOKEN_RE = /^\d{5,15}:[A-Za-z0-9_-]{30,60}$/;
@@ -51,7 +52,7 @@ const send = (tok, chat, text) =>
 function lineLabel(device, slot) {
   const k = db.prepare('SELECT k.name kname, d.name dname FROM devices d LEFT JOIN device_keys k ON k.device_id = d.id WHERE d.id = ?').get(device);
   const sim = db.prepare('SELECT operator FROM sims WHERE device_id = ? AND slot = ?').get(device, slot);
-  return [k?.kname || k?.dname || 'SMS Gateway', `SIM ${slot}`, sim?.operator].filter(Boolean).join(' · ');
+  return [k?.kname || k?.dname || 'SMS Gateway', simLabel(device, slot), sim?.operator].filter(Boolean).join(' · ');
 }
 
 const chatsFor = (device, slot) => routes()[`${device}:${slot}`] || [];

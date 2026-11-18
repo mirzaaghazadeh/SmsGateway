@@ -11,7 +11,8 @@ work for a stranger who clones the repo.
 | `firmware/sms_gateway/` | Gateway firmware (Arduino, ESP32-S3). Version in `config.h` (`FW_VERSION`). |
 | `firmware/sim800_test/` | Bench test sketch for one SIM800L. |
 | `server/` | Node.js 24+ server and web panel, no npm dependencies. Docker image for Coolify. |
-| `source/`, `case/v6/` | OpenSCAD source and print files of the case. |
+| `source/`, `case/v1/`, `case/v2/` | OpenSCAD source and print files of the two cases: v1 = hand-wired build, v2 = PCB build. |
+| `pcb/` | v2 carrier PCB. `make_board.py` generates everything in the folder (Gerbers, BOM, pick-and-place, assembly drawing, order package, KiCad file, renders); edit the script, not the outputs. |
 | `.github/workflows/firmware-release.yml` | Builds the firmware and publishes a GitHub release for a `vX.Y.Z` tag. |
 | `CHANGELOG.md` | What changed in each version. |
 

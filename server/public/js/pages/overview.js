@@ -54,7 +54,9 @@ function stat(n, label, bad = false) {
 }
 
 function gateway(dev, now) {
-  const sims = [1, 2].map((slot) => simCard(dev.sims.find((x) => x.slot === slot), slot, dev.online));
+  // a slot the owner turned off (no module in it) is not shown
+  const sims = [1, 2].filter((slot) => dev.lines?.[slot]?.enabled !== false)
+    .map((slot) => simCard(dev.sims.find((x) => x.slot === slot), slot, dev.online, dev.id));
   return [
     h('section', { class: 'panel gateway', 'aria-label': 'Gateway' },
       h('div', {},
@@ -63,7 +65,7 @@ function gateway(dev, now) {
           dev.online ? h('span', { class: 'badge ok' }, 'Online') : h('span', { class: 'badge bad' }, `Offline · last seen ${ago(dev.last_seen, now)}`)
         ),
         h('div', { class: 'facts' },
-          fact('Wi-Fi', dev.ssid ? `${dev.ssid} · ${dev.wifi_rssi} dBm (${wifiQuality(dev.wifi_rssi)})` : '–'),
+          fact('Wi-Fi', dev.ssid ? (dev.wifi_rssi != null ? `${dev.ssid} · ${dev.wifi_rssi} dBm (${wifiQuality(dev.wifi_rssi)})` : dev.ssid) : '–'),
           fact('Address', dev.ip || '–'),
           fact('Running for', duration(dev.uptime)),
           fact('Firmware', dev.fw || '–'),

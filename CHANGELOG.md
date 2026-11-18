@@ -4,11 +4,33 @@ Versions are the gateway firmware versions (`FW_VERSION` in `firmware/sms_gatewa
 is a GitHub release tagged `vX.Y.Z` with the firmware files. Server changes ship with the version they
 were made for; the server deploys from `main`.
 
-## Unreleased
+## 1.2.0
 
-- Server: Telegram. Add a bot under Settings → Telegram and choose, for each SIM, the chats that get
-  its SMS and missed calls (several chats per SIM are fine). A long SMS arrives as one Telegram
-  message, joined from its parts. The server sends them, so the gateway firmware does not change.
+- Telegram: add a bot under Settings → Telegram and choose, for each SIM, the chats that get its
+  SMS and missed calls (several chats per SIM are fine). A long SMS arrives as one Telegram
+  message, joined from its parts. The server sends them, so this works with every firmware.
+- SIM cards (Devices → SIM cards): give each slot a name ("Work") that shows across the panel and
+  in Telegram; turn a slot off when it has no module or SIM (the gateway stops trying it, the panel
+  hides it); choose the mobile network: automatic, or one picked from a network search (the module
+  falls back to automatic if that network is gone). On/off and the network need this firmware.
+- Firmware: a SIM800L without a SIM card (or with the card in the wrong way) now shows "no SIM
+  card" on the OLED and in the panel. Before, it showed "starting" and the module was restarted
+  over and over.
+- Signal page: a reading of 0 (no Wi-Fi yet, SIM800L not answering) no longer pulls the lines to
+  the bottom or the top; lines stay inside the chart; times are on full hours and show AM/PM where
+  your browser uses it.
+- Hardware v2: a carrier PCB (`pcb/`) that the ESP32, both SIM800Ls, both LM2596s and the OLED
+  plug into, so there is no loose wiring, and a case for it (`case/v2/`). Everything needed to
+  order bare or assembled boards (PCBA) is in `pcb/`.
+- The v2 PCB gives the SIM800Ls a fixed 4.0 V from an LM1084 regulator. LM2596 A only feeds that
+  regulator (set it to 5.5 V), so a trimmer turned too far can no longer reach the SIM800Ls: on
+  the first hand-wired build, an LM2596 at 12 V killed both modules. The 1000 uF capacitors are
+  now 16 V parts.
+- The hand-wired build is now called v1 (`case/v1/`, `source/sms_gateway_box_v1.scad`). The case
+  itself has not changed.
+- Docs: a "When something does not work" guide in ASSEMBLY.md (no answer, no SIM card, no light,
+  sparks), the same 4.0 V protection as an option for v1, and LESSONS.md with the mistakes from
+  the first build and how to avoid them.
 
 ## 1.1.2
 

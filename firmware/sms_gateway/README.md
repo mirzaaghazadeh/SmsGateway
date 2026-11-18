@@ -69,8 +69,13 @@ Default status light colors (change them in the panel: Settings → Status light
 OLED lines:
 1. Wi-Fi and server state.
 2. One line per SIM: operator and signal bars, or what is wrong ("no SIM card", "not answering",
-   "SIM PIN on", "low voltage").
+   "SIM PIN on", "low voltage"), or "off" for a slot turned off in the panel (Devices → SIM cards:
+   the module is then held in reset and left alone).
 3. Counters since start.
+
+The SIM800L looks for its SIM card only when it starts. After you put a card in, switch the
+gateway off and on (or Devices → restart the SIM800L in the panel). What each message means and
+how to fix it: [ASSEMBLY.md → When something does not work](../../ASSEMBLY.md#when-something-does-not-work).
 
 ## Updates over Wi-Fi
 

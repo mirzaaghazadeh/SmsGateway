@@ -1,12 +1,13 @@
 // Pieces shared by several pages: SIM cards, message and call rows.
-import { h, icon, signal, simState, REG, volts, statusBadge, timeEl, fullTime, ago } from '../ui.js';
+import { h, icon, signal, simState, REG, volts, statusBadge, timeEl, fullTime, ago, simName, simTag } from '../ui.js';
 
-export function simCard(sim, slot, online = true) {
+export function simCard(sim, slot, online = true, device = null) {
   const cls = slot === 2 ? 's2' : '';
+  const tag = simTag(slot, device);
   if (!sim) {
     return h('div', { class: 'simw' }, h('article', { class: `sim ${cls} off` },
       h('div', { class: 'sim-head' }, h('span', { class: 'sim-chip' }, `${slot}`),
-        h('div', {}, h('div', { class: 'op' }, `SIM ${slot}`), h('div', { class: 'state' }, 'Not reported by the gateway yet'))),
+        h('div', {}, h('div', { class: 'op' }, tag), h('div', { class: 'state' }, 'Not reported by the gateway yet'))),
       h('div', { class: 'sim-signal' }, bars(0))
     ));
   }
@@ -18,8 +19,8 @@ export function simCard(sim, slot, online = true) {
     h('div', { class: 'sim-head' },
       h('span', { class: 'sim-chip', 'aria-hidden': 'true' }, `${slot}`),
       h('div', { class: 'grow' },
-        h('div', { class: 'op' }, sim.operator || `SIM ${slot}`),
-        h('div', { class: 'state' }, sim.operator ? `SIM ${slot}` : REG[sim.reg] || '')
+        h('div', { class: 'op' }, sim.operator || tag),
+        h('div', { class: 'state' }, sim.operator ? tag : REG[sim.reg] || '')
       ),
       h('span', { class: `badge ${stCls}` }, stLabel)
     ),
@@ -65,7 +66,7 @@ export function messageRow(m, { onRetry, open = false, onToggle } = {}) {
         h('span', { class: 'who' }, m.number),
         h('span', { class: 'text', dir: 'auto' }, m.text)
       ),
-      h('span', { class: 'meta' }, timeEl(m.created_at), incoming ? (m.slot ? `SIM ${m.slot}` : '') : statusBadge(m.status))
+      h('span', { class: 'meta' }, timeEl(m.created_at), incoming ? (m.slot ? simName(m.slot, m.device_id) : '') : statusBadge(m.status))
     );
     const out = [btn];
     if (isOpen) {
@@ -73,7 +74,7 @@ export function messageRow(m, { onRetry, open = false, onToggle } = {}) {
         incoming ? `Received ${fullTime(m.created_at)}` : `Created ${fullTime(m.created_at)}`,
         m.sms_time ? `Sent by network ${fullTime(m.sms_time)}` : null,
         m.sent_at ? `Sent ${fullTime(m.sent_at)}` : null,
-        m.slot ? `SIM ${m.slot}` : m.want_slot ? `Asked for SIM ${m.want_slot}` : 'Any SIM',
+        m.slot ? simTag(m.slot, m.device_id) : m.want_slot ? `Asked for ${simTag(m.want_slot)}` : 'Any SIM',
         `${m.parts || 1} SMS · ${m.encoding || '–'}`,
         m.source && !incoming ? `from ${m.source}` : null,
         m.attempts ? `${m.attempts} attempt${m.attempts === 1 ? '' : 's'}` : null,
@@ -101,7 +102,7 @@ export function callRow(c) {
   return h('li', {}, h('div', { class: 'item' },
     h('span', { class: 'ico call' }, icon('calls')),
     h('span', { class: 'grow' }, h('span', { class: 'who' }, c.number), h('span', { class: 'text' }, callText(c))),
-    h('span', { class: 'meta' }, timeEl(c.ts), c.slot ? `SIM ${c.slot}` : '')
+    h('span', { class: 'meta' }, timeEl(c.ts), c.slot ? simName(c.slot, c.device_id) : '')
   ));
 }
 

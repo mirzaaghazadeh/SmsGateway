@@ -111,7 +111,10 @@ static void handleJob(JsonObject j) {
       }
     }
     if (!m->enqueue(job)) {
-      evJob(id, false, strcmp(m->stateName(), "no_answer") == 0 ? "the SIM800L is not answering" : "the SIM800L is busy, queue full");
+      const char *st = m->stateName();
+      evJob(id, false, !strcmp(st, "off")         ? "this SIM is turned off in the panel"
+                       : !strcmp(st, "no_answer") ? "the SIM800L is not answering"
+                                                  : "the SIM800L is busy, queue full");
     }
   } else if (!strcmp(type, "modem_reset")) {
     if (!m) {
@@ -246,6 +249,17 @@ static bool sync() {
     uint32_t iv = cfg["interval"] | 5;
     interval = constrain(iv, 2u, 60u) * 1000;
     led::apply(cfg["led"]);
+    // per SIM slot (server 1.2.0+): {"1": {"on": true, "net": "auto"}, "2": {"on": false, "net": "28601"}}
+    JsonObject sims = cfg["sims"];
+    if (!sims.isNull()) {
+      for (uint8_t s = 1; s <= 2; s++) {
+        JsonObject o = sims[s == 1 ? "1" : "2"];
+        if (o.isNull()) continue;
+        Modem *m = modemFor(s);
+        m->setEnabled(o["on"] | true);
+        m->setNetwork(o["net"] | "auto");
+      }
+    }
   }
   for (JsonObject j : r["jobs"].as<JsonArray>()) handleJob(j);
   JsonObject u = r["update"];

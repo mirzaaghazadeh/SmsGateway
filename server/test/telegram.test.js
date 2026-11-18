@@ -23,8 +23,8 @@ test('an emoji is never cut in half', () => {
 });
 
 test('SMS notice: sender, line, joined parts, escaping, missing parts', () => {
-  const [m] = smsMessages({ from: '+905551234567', text: 'a < b & c', line: 'Home · SIM 1 · Turkcell', parts: 3, note: '1 of 3 parts never arrived' });
-  assert.match(m, /^📩 <b>\+905551234567<\/b>\n<i>Home · SIM 1 · Turkcell · 3 SMS joined<\/i>/);
+  const [m] = smsMessages({ from: '+15551234567', text: 'a < b & c', line: 'Home · SIM 1 · Turkcell', parts: 3, note: '1 of 3 parts never arrived' });
+  assert.match(m, /^📩 <b>\+15551234567<\/b>\n<i>Home · SIM 1 · Turkcell · 3 SMS joined<\/i>/);
   assert.ok(m.includes('a &lt; b &amp; c'));
   assert.ok(m.endsWith('⚠️ 1 of 3 parts never arrived'));
 });

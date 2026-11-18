@@ -1,4 +1,4 @@
-import { h, s, clear, icon, api, setUnauthorizedHandler, poll, busy } from './ui.js';
+import { h, s, clear, icon, api, setUnauthorizedHandler, poll, busy, setLines } from './ui.js';
 import overview from './pages/overview.js';
 import messages from './pages/messages.js';
 import calls from './pages/calls.js';
@@ -77,7 +77,8 @@ function shell() {
   });
   stopRail?.();
   stopRail = poll(async () => {
-    const { gateways } = await api('/api/devices');
+    const { gateways, lines } = await api('/api/devices');
+    setLines(lines);
     const on = gateways.filter((d) => d.online).length;
     const ready = gateways.flatMap((d) => (d.online ? d.sims : [])).filter((x) => x.ready).length;
     const connected = gateways.some((d) => d.connected);
@@ -86,7 +87,8 @@ function shell() {
       !gateways.length ? 'No gateway yet' : !connected ? 'Waiting for gateway' : on ? `Online · ${ready} SIM${ready === 1 ? '' : 's'} ready` : 'Gateway offline'
     );
   }, 10_000);
-  route();
+  // the SIM names and on/off first, so the first page shows them; draw it even if this fails
+  api('/api/devices').then((r) => setLines(r.lines)).catch(() => {}).finally(() => route());
 }
 
 function login(message) {

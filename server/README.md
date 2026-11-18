@@ -13,6 +13,8 @@ panel with hand-drawn SVG charts. One container, one SQLite file.
   - Signal charts: mobile signal, Wi-Fi, SIM800L supply voltage.
   - Analytics: per day, per SIM, top senders and callers.
   - Devices: add a gateway by its key, restart it or one SIM800L, an AT command console, the event log.
+    SIM cards: a name per slot, turn an empty slot off, choose the mobile network (automatic or
+    one picked from a search; needs firmware 1.2.0).
   - Settings.
 - **Pairing**: each gateway makes its own device key (like `K7Q2-M9XD-4TPA-W3HZ`) and shows it on its
   setup page and screen. You add the key under Devices. The server keeps only a hash of it. On the
@@ -34,6 +36,9 @@ panel with hand-drawn SVG charts. One container, one SQLite file.
    - Build pack: **Docker Compose**.
    - Base directory: **`/`**.
    - Docker Compose Location: **`/docker-compose.yaml`**.
+
+   Switching an existing Dockerfile resource? Change the base directory from `/server` to `/` as
+   well, or Coolify reports "Docker Compose file not found at /server/docker-compose.yaml".
 2. **Domain** of the `gateway` service: your address **with the port**, for example
    `https://sms.example.com:3000`. The `:3000` only tells Coolify where the app listens; visitors and
    the gateway use `https://sms.example.com`. Coolify gets the HTTPS certificate. The ESP32 checks it

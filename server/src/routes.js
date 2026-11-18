@@ -8,6 +8,7 @@ import { webhookSecret, testWebhook, EVENTS } from './webhook.js';
 import { checkReleases, firmwareView, cachedFirmware, readFirmware, newer, maybeCheckReleases } from './firmware.js';
 import { ledSettings, setLedSettings, LED_STATES, LED_MODES } from './led.js';
 import { telegramView, setTelegram, recentChats, testChats, lineLabel } from './telegram.js';
+import { allLines, linesFor, updateLine } from './lines.js';
 
 export const router = new Router();
 
@@ -46,6 +47,7 @@ router.get('/api/auth/me', (req) => ({ loggedIn: auth.isLoggedIn(req) }));
 function gatewayList(now = Date.now()) {
   const sims = db.prepare('SELECT * FROM sims ORDER BY slot').all();
   const devices = new Map(db.prepare('SELECT * FROM devices').all().map((d) => [d.id, d]));
+  const lines = allLines();
   return db
     .prepare('SELECT * FROM device_keys ORDER BY added_at')
     .all()
@@ -60,6 +62,7 @@ function gatewayList(now = Date.now()) {
         name: k.name || d?.name || 'SMS Gateway',
         connected: !!d,
         online: !!d && now - d.last_seen < ONLINE_MS,
+        lines: d ? linesFor(d.id, lines) : null,   // name, on/off and network of SIM 1 and 2
         sims: !d ? [] : sims
           .filter((s) => s.device_id === d.id)
           .map((s) => ({ ...s, dbm: csqToDbm(s.csq), ready: s.state === 'ready' && (s.reg === 1 || s.reg === 5) })),
@@ -152,8 +155,10 @@ router.get('/api/signals', panel((req) => {
   const device = req.query.device || devices[0]?.id;
   const rows = db
     .prepare(
-      `SELECT (ts / ?) * ? AS t, AVG(wifi_rssi) wifi, AVG(NULLIF(s1_csq, 99)) s1, AVG(NULLIF(s2_csq, 99)) s2,
-              AVG(s1_mv) s1mv, AVG(s2_mv) s2mv, MIN(heap) heap
+      // 0 meant "no reading" in samples stored by older servers: leave those out of the averages
+      `SELECT (ts / ?) * ? AS t, AVG(CASE WHEN wifi_rssi < 0 THEN wifi_rssi END) wifi,
+              AVG(NULLIF(s1_csq, 99)) s1, AVG(NULLIF(s2_csq, 99)) s2,
+              AVG(NULLIF(s1_mv, 0)) s1mv, AVG(NULLIF(s2_mv, 0)) s2mv, MIN(heap) heap
        FROM samples WHERE device_id = ? AND ts > ? GROUP BY t ORDER BY t`
     )
     .all(bucket, bucket, device ?? '', since);
@@ -222,11 +227,18 @@ router.get('/api/logs', panel((req) => {
   return { items: rows.slice(0, limit), more: rows.length > limit };
 }));
 
-router.get('/api/devices', panel(() => ({
-  gateways: gatewayList(),
-  waiting: auth.waitingGateways(),
-  firmware: cachedFirmware()?.version || null,
-})));
+router.get('/api/devices', panel(() => {
+  const gateways = gatewayList();
+  // every SIM line by "<device>:<slot>", for labels across the panel
+  const lines = Object.fromEntries(gateways.filter((g) => g.connected)
+    .flatMap((g) => Object.entries(g.lines).map(([slot, l]) => [`${g.id}:${slot}`, l])));
+  return { gateways, lines, waiting: auth.waitingGateways(), firmware: cachedFirmware()?.version || null };
+}));
+// name a SIM line, turn it on or off, choose its network: body { name?, enabled?, network? }
+router.put('/api/devices/:id/sims/:slot', panel(async (req) => {
+  if (!db.prepare('SELECT 1 FROM devices WHERE id = ?').get(req.params.id)) notFound();
+  return updateLine(req.params.id, req.params.slot, await readJson(req));
+}));
 router.post('/api/devices/:id/update', panel((req) => {
   const d = db.prepare('SELECT * FROM devices WHERE id = ?').get(req.params.id);
   if (!d) notFound();
@@ -316,9 +328,12 @@ router.post('/api/settings/webhook-test', panel(() => testWebhook()));
 
 // Telegram: one line = one SIM slot of a gateway that has checked in.
 const telegramLines = () =>
-  devicesWithSims().flatMap((g) => [1, 2].map((slot) => {
+  devicesWithSims().flatMap((g) => [1, 2].filter((slot) => g.lines[slot].enabled).map((slot) => {
     const s = g.sims.find((x) => x.slot === slot);
-    return { device: g.id, slot, gateway: g.name, operator: s?.operator || null, state: s?.state || null, ready: !!s?.ready };
+    return {
+      device: g.id, slot, gateway: g.name, name: g.lines[slot].name,
+      operator: s?.operator || null, state: s?.state || null, ready: !!s?.ready,
+    };
   }));
 
 router.get('/api/telegram', panel(() => telegramView(telegramLines())));
@@ -352,7 +367,10 @@ router.get('/api/v1/calls', api((req) => listCalls(req.query, { asc: !!req.query
 router.get('/api/v1/status', api(() =>
   devicesWithSims().map((d) => ({
     id: d.id, name: d.name, online: d.online, last_seen: d.last_seen,
-    sims: d.sims.map((s) => ({ sim: s.slot, ready: s.ready, operator: s.operator, signal_dbm: s.dbm, state: s.state })),
+    sims: d.sims.map((s) => ({
+      sim: s.slot, name: d.lines[s.slot]?.name || null, enabled: d.lines[s.slot]?.enabled !== false,
+      ready: s.ready, operator: s.operator, signal_dbm: s.dbm, state: s.state,
+    })),
   }))
 ));
 

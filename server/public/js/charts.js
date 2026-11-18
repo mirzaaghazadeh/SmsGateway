@@ -17,6 +17,18 @@ function ticks(min, max, count = 4) {
   return out;
 }
 
+// Time ticks on round local times: every 15 min ... 1 week, no more than `count` of them.
+const STEPS = [15, 30, 60, 120, 180, 360, 720, 1440, 2880, 4320, 10080].map((m) => m * 60_000);
+function timeTicks(t0, t1, count) {
+  const step = STEPS.find((s) => (t1 - t0) / s <= count) || STEPS.at(-1);
+  const off = new Date(t0).getTimezoneOffset() * 60_000; // local midnight / full hours
+  const out = [];
+  for (let t = Math.ceil((t0 - off) / step) * step + off; t <= t1; t += step) out.push(t);
+  return out;
+}
+
+let clipSeq = 0;
+
 // Re-render on width changes; returns the container.
 function responsive(draw) {
   const box = h('div', { class: 'chart' });
@@ -88,10 +100,16 @@ export function lineChart(points, series, opts = {}) {
       svg.append(s('text', { class: 'axis', x: M.left - 8, y: y(v) + 4, 'text-anchor': 'end' }, yFmt(v)));
     }
     const xCount = Math.max(2, Math.floor(iw / 110));
-    for (let i = 0; i <= xCount; i++) {
-      const t = t0 + ((t1 - t0) * i) / xCount;
-      svg.append(s('text', { class: 'axis', x: x(t), y: height - 6, 'text-anchor': i === 0 ? 'start' : i === xCount ? 'end' : 'middle' }, opts.xFmt(t)));
+    for (const t of timeTicks(t0, t1, xCount)) {
+      const px = x(t);
+      const anchor = px < M.left + 24 ? 'start' : px > M.left + iw - 24 ? 'end' : 'middle';
+      svg.append(s('text', { class: 'axis', x: px, y: height - 6, 'text-anchor': anchor }, opts.xFmt(t)));
     }
+    // lines stay inside the plot, even for a value outside the scale
+    const clipId = `plot-${++clipSeq}`;
+    svg.append(s('defs', {}, s('clipPath', { id: clipId }, s('rect', { x: M.left, y: M.top - 2, width: iw, height: ih + 4 }))));
+    const lines = s('g', { 'clip-path': `url(#${clipId})` });
+    svg.append(lines);
     const gap = opts.gapMs || Infinity;
     for (const sr of series) {
       let d = '';
@@ -105,7 +123,7 @@ export function lineChart(points, series, opts = {}) {
         d += `${prevT == null || p.t - prevT > gap ? 'M' : 'L'}${x(p.t).toFixed(1)},${y(v).toFixed(1)}`;
         prevT = p.t;
       }
-      if (d) svg.append(s('path', { class: 'line', d, style: `stroke:${sr.color}` }));
+      if (d) lines.append(s('path', { class: 'line', d, style: `stroke:${sr.color}` }));
     }
 
     const cross = s('line', { class: 'cross', y1: M.top, y2: M.top + ih, visibility: 'hidden' });
@@ -127,7 +145,7 @@ export function lineChart(points, series, opts = {}) {
       series.forEach((sr, i) => {
         const v = best[sr.key];
         dots[i].setAttribute('visibility', v == null ? 'hidden' : 'visible');
-        if (v != null) dots[i].setAttribute('cx', cx), dots[i].setAttribute('cy', y(v));
+        if (v != null) dots[i].setAttribute('cx', cx), dots[i].setAttribute('cy', Math.min(M.top + ih, Math.max(M.top, y(v))));
       });
       tooltip(box, opts.tipFmt(best.t), series.map((sr) => ({
         label: sr.label, color: sr.color, value: best[sr.key] == null ? '–' : (sr.fmt || yFmt)(best[sr.key]),

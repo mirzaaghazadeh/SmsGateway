@@ -62,6 +62,7 @@ static String shortState(const Modem &m) {
     return op.length() > 12 ? op.substring(0, 12) : op;
   }
   if (s == "no_sim") return "no SIM card";
+  if (s == "off") return "off";
   if (s == "no_answer") return "not answering";
   if (s == "sim_locked") return "SIM PIN on";
   if (s == "low_power") return "low voltage";

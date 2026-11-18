@@ -31,6 +31,10 @@ class Modem {
   const char *stateName() const;
 
   bool rejectCalls = true;  // set from the server config
+  // From the server config (firmware 1.2.0): the owner turned this slot off, or chose its network.
+  void setEnabled(bool on);
+  void setNetwork(const char *want);  // "auto" or a network code like "28601"
+  bool enabled() const { return st_ != St::OFF; }
 
   // last known status
   const uint8_t slot;
@@ -38,9 +42,9 @@ class Modem {
   int csq = 99, reg = 0, mv = 0;
 
  private:
-  enum class St : uint8_t { RESET, BOOT_WAIT, PROBE, INIT, SIM_WAIT, NET_INIT, IDLE, DEAD };
+  enum class St : uint8_t { RESET, BOOT_WAIT, PROBE, INIT, SIM_WAIT, NET_INIT, IDLE, DEAD, OFF };
   enum class Res : uint8_t { NONE, OK, ERR, TIMEOUT, PROMPT };
-  enum Tag : uint8_t { T_PROBE, T_INIT, T_CPIN, T_NET, T_CSQ, T_CREG, T_COPS, T_CBC, T_CMGL, T_CMGD, T_CMGS, T_CMGS_BODY, T_AT_USER, T_ATH };
+  enum Tag : uint8_t { T_PROBE, T_INIT, T_CPIN, T_NET, T_CSQ, T_CREG, T_COPS, T_CBC, T_CMGL, T_CMGD, T_CMGS, T_CMGS_BODY, T_AT_USER, T_ATH, T_COPS_SET };
 
   void readPort();
   void handleLine(const String &l);
@@ -78,6 +82,11 @@ class Modem {
   bool scanDue_ = false;
   bool lowPower_ = false;
   bool registeredLogged_ = false;
+
+  // network choice: what the server wants, what was set since the module started, what is being sent
+  String netWant_, netDone_, netSent_;
+  int copsMode_ = -1;        // from AT+COPS?: 0 automatic, 1 manual, 4 manual with fallback, -1 unknown
+  uint32_t netNext_ = 0;     // a failed choice is tried again after this
 
   struct Flight { int16_t idx; uint32_t since; };
   std::vector<Flight> flight_;

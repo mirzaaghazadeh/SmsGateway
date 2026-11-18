@@ -1,4 +1,4 @@
-import { h, clear, api, poll, segmented, emptyState, panel, shortTime, clock, fullTime } from '../ui.js';
+import { h, clear, api, poll, segmented, emptyState, panel, shortTime, hm, fullTime, simName, simOn } from '../ui.js';
 import { lineChart, legend } from '../charts.js';
 
 const RANGES = [
@@ -45,19 +45,17 @@ export default function signalPage(page) {
     }
     const to = Date.now();
     const from = to - hours * 3600_000;
-    const xFmt = hours <= 24 ? (t) => clock(t).slice(0, 5) : (t) => shortTime(t).replace(/,? \d\d:\d\d.*/, '');
+    const xFmt = hours <= 24 ? hm : (t) => shortTime(t).replace(/,? \d\d:\d\d.*/, '');
     const common = { from, to, xFmt, tipFmt: (t) => fullTime(t), gapMs: Math.max(3 * r.bucket, 180_000) };
     const last = r.points.at(-1);
+    const on = [1, 2].filter((s) => simOn(s, device)); // slots turned off are not drawn
     const sig = [
-      { key: 's1', label: 'SIM 1', color: 'var(--sim1)', fmt: (v) => `${v} dBm` },
-      { key: 's2', label: 'SIM 2', color: 'var(--sim2)', fmt: (v) => `${v} dBm` },
+      ...on.map((s) => ({ key: `s${s}`, label: simName(s, device), color: `var(--sim${s})`, fmt: (v) => `${v} dBm` })),
       { key: 'wifi', label: 'Wi-Fi', color: 'var(--wifi)', fmt: (v) => `${v} dBm` },
     ];
-    const mv = [
-      { key: 's1mv', label: 'SIM 1', color: 'var(--sim1)', fmt: (v) => `${(v / 1000).toFixed(2)} V` },
-      { key: 's2mv', label: 'SIM 2', color: 'var(--sim2)', fmt: (v) => `${(v / 1000).toFixed(2)} V` },
-    ];
-    const minMv = Math.min(...r.points.flatMap((p) => [p.s1mv, p.s2mv]).filter((v) => v));
+    const mv = on.map((s) => ({ key: `s${s}mv`, label: simName(s, device), color: `var(--sim${s})`, fmt: (v) => `${(v / 1000).toFixed(2)} V` }));
+    const dbm = (v) => (v == null ? '–' : `${v} dBm`);
+    const minMv = Math.min(...r.points.flatMap((p) => on.map((s) => p[`s${s}mv`])).filter((v) => v));
     clear(body,
       panel('Signal strength', legend(sig),
         h('div', { class: 'panel-body' },
@@ -65,7 +63,7 @@ export default function signalPage(page) {
             bands: [{ from: -73, to: -45 }, { from: -99, to: -85 }] }),
           h('p', { class: 'hint', style: { marginTop: '10px' } },
             'Shaded: above -73 dBm is excellent, -85 to -99 is fair. Below -100 dBm SMS may fail; move the antennas or the box. ',
-            `Now: SIM 1 ${last.s1 ?? '–'} dBm, SIM 2 ${last.s2 ?? '–'} dBm, Wi-Fi ${last.wifi ?? '–'} dBm.`)
+            `Now: ${[...on.map((s) => `${simName(s, device)} ${dbm(last[`s${s}`])}`), `Wi-Fi ${dbm(last.wifi)}`].join(', ')}.`)
         )
       ),
       panel('SIM800L supply voltage', legend(mv),

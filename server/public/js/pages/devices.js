@@ -17,7 +17,10 @@ export default function devices(page) {
   let consoleBuilt = false;
   const addBox = h('div', { style: { display: 'contents' } });
   const listBox = h('div', { style: { display: 'contents' } }, h('div', { class: 'skeleton' }));
+  const simsBox = h('div', { style: { display: 'contents' } });
   const consoleBox = h('div', { style: { display: 'contents' } });
+  let simsSig = '';
+  const scans = new Map(); // "<device>:<slot>" -> { busy, list, error } of "Find networks"
   const logBox = h('div', {});
   const waitingHint = h('div', {});
 
@@ -28,6 +31,7 @@ export default function devices(page) {
     ),
     addBox,
     listBox,
+    simsBox,
     consoleBox,
     panel('Event log', null, logBox)
   );
@@ -55,6 +59,14 @@ export default function devices(page) {
       h('span', {}, r.waiting.map((w, i) => [i ? h('br') : null,
         `A gateway with a key ending in `, h('b', { class: 'mono' }, w.hint), ` tried to connect ${ago(w.at)}. Paste its full key here to add it.`]))) : null);
     clear(listBox, gateways.map((g) => gatewayPanel(g, refresh, r.firmware)));
+    // SIM card settings: redraw only when they change, and never while you type in them
+    const connected = gateways.filter((g) => g.connected);
+    const sig = JSON.stringify([connected.map((g) => [g.id, g.name, g.fw, g.online, g.lines, g.sims.map((x) => [x.slot, x.operator])]),
+      [...scans.entries()]]);
+    if (sig !== simsSig && !simsBox.contains(document.activeElement)) {
+      simsSig = sig;
+      clear(simsBox, connected.map((g) => simsPanel(g, scans, () => refresh())));
+    }
     if (gateways.some((g) => g.connected) && !consoleBuilt) {
       consoleBuilt = true;
       consoleBox.append(atConsole(() => gateways.filter((g) => g.connected)));
@@ -116,15 +128,127 @@ function addPanel(serverUrl, waitingHint, onAdded) {
   ));
 }
 
-async function runJob(deviceId, body, onDone) {
+async function runJob(deviceId, body, onDone, maxMs = 120_000) {
   const job = await api(`/api/devices/${encodeURIComponent(deviceId)}/jobs`, { method: 'POST', body });
   const started = Date.now();
-  while (Date.now() - started < 120_000) {
+  while (Date.now() - started < maxMs) {
     await new Promise((r) => setTimeout(r, 1000));
     const j = await api(`/api/jobs/${job.id}`);
     if (['done', 'failed', 'lost'].includes(j.status)) return onDone(j);
   }
-  onDone({ status: 'lost', result: 'No answer within 2 minutes' });
+  onDone({ status: 'lost', result: `No answer within ${Math.round(maxMs / 60000)} minutes` });
+}
+
+// "+COPS: (2,"Operator A","OPA","28601"),(1,...),,(0-4),(0-2)" -> [{ stat, name, code }]
+// stat: 1 available, 2 in use now, 3 not allowed for this SIM
+function parseNetworks(text) {
+  const out = [];
+  const re = /\((\d),"([^"]*)","([^"]*)","(\d{5,6})"(?:,\d+)?\)/g;
+  let m;
+  while ((m = re.exec(text || ''))) out.push({ stat: Number(m[1]), name: m[2] || m[3] || m[4], code: m[4] });
+  return out;
+}
+
+const NET_STAT = { 2: ' · in use now', 3: ' · not allowed for this SIM' };
+
+// One row per SIM slot: a name, on/off, and the mobile network (automatic or chosen).
+function simsPanel(g, scans, refresh) {
+  const fwOk = newer(g.fw, '1.1.9');
+  const save = async (slot, body, okText) => {
+    try {
+      await api(`/api/devices/${encodeURIComponent(g.id)}/sims/${slot}`, { method: 'PUT', body });
+      toast(okText);
+      refresh();
+    } catch (e) {
+      toast(e.message, 'bad');
+      refresh();
+    }
+  };
+  const row = (slot) => {
+    const line = g.lines[slot];
+    const sim = g.sims.find((x) => x.slot === slot);
+    const key = `${g.id}:${slot}`;
+    const scan = scans.get(key) || {};
+
+    const name = h('input', {
+      class: 'input', value: line.name, maxlength: 24, placeholder: 'e.g. Work', 'aria-label': `Name of SIM ${slot}`,
+      style: { width: '170px' },
+      onkeydown: (e) => e.key === 'Enter' && e.target.blur(),
+      onchange: (e) => save(slot, { name: e.target.value }, e.target.value.trim() ? `SIM ${slot} is now "${e.target.value.trim()}"` : `SIM ${slot} name removed`),
+    });
+
+    const on = h('input', {
+      type: 'checkbox', checked: line.enabled, 'aria-label': `SIM ${slot} on`,
+      onchange: (e) => {
+        if (!e.target.checked && !confirm(`Turn SIM ${slot} off? The gateway stops using this slot and the panel hides it. You can turn it on here again at any time.`)) {
+          e.target.checked = true;
+          return;
+        }
+        save(slot, { enabled: e.target.checked }, e.target.checked ? `SIM ${slot} on` : `SIM ${slot} off`);
+      },
+    });
+
+    const nets = scan.list || [];
+    const net = h('select', {
+      class: 'select', 'aria-label': `Mobile network of SIM ${slot}`, disabled: !line.enabled,
+      style: { width: 'auto', flex: '1 1 200px', maxWidth: '340px' },
+    },
+      h('option', { value: 'auto' }, 'Automatic'),
+      nets.map((n) => h('option', { value: n.code, disabled: n.stat === 3 }, `${n.name} (${n.code})${NET_STAT[n.stat] || ''}`)),
+      line.network !== 'auto' && !nets.some((n) => n.code === line.network) ? h('option', { value: line.network }, `Network ${line.network}`) : null,
+      h('option', { value: 'other' }, 'Other code…')
+    );
+    net.value = line.network;
+    net.addEventListener('change', () => {
+      let v = net.value;
+      if (v === 'other') {
+        v = (prompt('Network code: country + operator, 5 or 6 digits (e.g. 28601)') || '').trim();
+        if (!v) {
+          net.value = line.network;
+          return;
+        }
+      }
+      save(slot, { network: v }, v === 'auto' ? `SIM ${slot}: automatic network` : `SIM ${slot}: network ${v} chosen`);
+    });
+
+    const find = h('button', {
+      class: `btn ${scan.busy ? 'busy' : ''}`, type: 'button', disabled: !g.online || !line.enabled || scan.busy || !fwOk,
+      title: fwOk ? 'Ask the SIM800L which networks it can see (takes up to 3 minutes)' : 'Needs firmware 1.2.0 on the gateway',
+      onclick: async () => {
+        scans.set(key, { busy: true });
+        refresh();
+        try {
+          await runJob(g.id, { type: 'at', slot, cmd: 'AT+COPS=?' }, (j) => {
+            const list = j.status === 'done' ? parseNetworks(j.result) : [];
+            scans.set(key, { list, error: list.length ? null : j.result || j.status });
+            toast(list.length ? `SIM ${slot}: ${list.length} networks found` : `SIM ${slot}: no networks found (${j.result || j.status})`, list.length ? '' : 'bad');
+          }, 240_000);
+        } catch (e) {
+          scans.set(key, { error: e.message });
+          toast(e.message, 'bad');
+        }
+        refresh();
+      },
+    }, icon('search'), scan.busy ? 'Searching…' : 'Find networks');
+
+    const state = !line.enabled ? 'Off' : sim?.operator ? `${sim.operator}` : sim ? sim.state : 'not reported yet';
+    return h('tr', {},
+      h('td', { class: 'nowrap' }, h('b', {}, `SIM ${slot}`), h('div', { class: 'hint' }, state)),
+      h('td', {}, name),
+      h('td', {}, h('label', { class: 'row', style: { gap: '6px' } }, on, line.enabled ? 'On' : 'Off')),
+      h('td', { style: { minWidth: '300px' } }, h('div', { class: 'row' }, net, find),
+        scan.error ? h('div', { class: 'hint' }, scan.error) : null)
+    );
+  };
+  return panel(`SIM cards · ${g.name}`, null, h('div', { class: 'panel-body form' },
+    h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
+      h('thead', {}, h('tr', {}, h('th', {}, 'Slot'), h('th', {}, 'Name'), h('th', {}, 'In use'), h('th', {}, 'Mobile network'))),
+      h('tbody', {}, [1, 2].map(row)))),
+    h('p', { class: 'hint' },
+      'A name shows up across the panel and in Telegram. Turn a slot off when it has no module or SIM: the gateway stops trying it and the panel hides it. ',
+      'Automatic lets the SIM800L pick the network. Pick one to stay on it; if it is gone, the module picks another by itself.'),
+    fwOk ? null : h('p', { class: 'note' }, icon('alert'), h('span', {}, `This gateway runs ${g.fw || 'old firmware'}. Names work now; on/off and the network choice need firmware 1.2.0.`))
+  ));
 }
 
 // true when version a is newer than b ("1.1.0" > "1.0.9")

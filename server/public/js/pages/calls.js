@@ -1,4 +1,4 @@
-import { h, clear, icon, api, poll, busy, emptyState, timeEl, fullTime } from '../ui.js';
+import { h, clear, icon, api, poll, busy, emptyState, timeEl, fullTime, simName } from '../ui.js';
 import { callText } from './parts.js';
 
 export default function calls(page) {
@@ -36,7 +36,7 @@ export default function calls(page) {
         h('tbody', {}, items.map((c) => h('tr', {},
           h('td', { class: 'nowrap', title: fullTime(c.ts) }, timeEl(c.ts)),
           h('td', { class: 'mono nowrap' }, c.number),
-          h('td', { class: 'nowrap' }, c.slot ? `SIM ${c.slot}` : '–'),
+          h('td', { class: 'nowrap' }, c.slot ? simName(c.slot, c.device_id) : '–'),
           h('td', { class: 'muted' }, callText(c)),
           h('td', { class: 'r' }, c.number !== 'unknown'
             ? h('a', { class: 'btn sm', href: `/messages?to=${encodeURIComponent(c.number)}` }, icon('send'), 'Text back')

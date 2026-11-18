@@ -7,11 +7,13 @@ Modem modem2(2, Serial2, SIM2_RX, SIM2_TX, SIM2_RST);
 
 Modem *modemFor(uint8_t slot) { return slot == 1 ? &modem1 : slot == 2 ? &modem2 : nullptr; }
 
-// After the module answers "AT": echo off, verbose errors, caller ID on, PDU mode, read the IMEI.
-static const char *INIT_CMDS[] = {"ATE0", "AT+CMEE=2", "AT+CLIP=1", "AT+CMGF=0", "AT+GSN"};
+// After the module answers "AT": echo off, verbose errors, caller ID on, read the IMEI. All of these
+// work without a SIM card, so a missing card shows up as "no SIM card" in the SIM check that follows.
+static const char *INIT_CMDS[] = {"ATE0", "AT+CMEE=2", "AT+CLIP=1", "AT+GSN"};
 static const uint8_t INIT_N = sizeof(INIT_CMDS) / sizeof(INIT_CMDS[0]);
-// After the SIM is ready: read its ID, keep SMS on the SIM card and announce new ones with +CMTI.
-static const char *NET_CMDS[] = {"AT+CCID", "AT+CPMS=\"SM\",\"SM\",\"SM\"", "AT+CNMI=2,1,0,0,0"};
+// After the SIM is ready: read its ID, PDU mode (needs the card: "SIM not inserted" otherwise), keep
+// SMS on the SIM card and announce new ones with +CMTI.
+static const char *NET_CMDS[] = {"AT+CCID", "AT+CMGF=0", "AT+CPMS=\"SM\",\"SM\",\"SM\"", "AT+CNMI=2,1,0,0,0"};
 static const uint8_t NET_N = sizeof(NET_CMDS) / sizeof(NET_CMDS[0]);
 
 static String field(const String &resp, const char *prefix) {
@@ -42,13 +44,63 @@ void Modem::begin() {
 }
 
 void Modem::setState(St s, uint32_t waitMs) {
+  if (s == St::INIT) {  // the module (re)started: it forgot a chosen network
+    netDone_ = "";
+    copsMode_ = -1;
+  }
   st_ = s;
   stUntil_ = millis() + waitMs;
   step_ = 0;
   tries_ = 0;
 }
 
+// The owner turned this slot off (no module or SIM in it) or on again. Off: the SIM800L is held in
+// reset, nothing is sent to it, and it reports "off" instead of "not answering".
+void Modem::setEnabled(bool on) {
+  if (on == enabled()) return;
+  if (!on) {
+    requestReset(nullptr);  // ends a call, fails the job that is running
+    while (!jobs_.empty()) {
+      if (jobs_.front().type == Job::AT) {
+        evAt(jobs_.front().id, false, "this SIM is turned off");
+        jobs_.pop_front();
+      } else {
+        finishJob(false, "this SIM is turned off");
+      }
+    }
+    jobActive_ = false;
+    del_.clear();
+    flight_.clear();
+    st_ = St::OFF;
+    if (rst_ >= 0) {
+      pinMode(rst_, OUTPUT);
+      digitalWrite(rst_, LOW);
+    }
+    csq = 99;
+    reg = 0;
+    mv = 0;
+    op = simStatus = "";
+    evLog(slot, "turned off in the panel");
+  } else {
+    if (rst_ >= 0) pinMode(rst_, INPUT);
+    evLog(slot, "turned on in the panel");
+    setState(St::RESET);
+  }
+}
+
+void Modem::setNetwork(const char *want) {
+  String w = want ? String(want) : String();
+  bool code = w.length() >= 5 && w.length() <= 6;
+  for (size_t i = 0; code && i < w.length(); i++) code = isDigit(w[i]);
+  if (w != "auto" && !code) return;
+  if (w != netWant_) {
+    netWant_ = w;
+    netNext_ = 0;
+  }
+}
+
 void Modem::requestReset(const char *why) {
+  if (st_ == St::OFF) return;
   if (why) evLog(slot, String("restarting the SIM800L: ") + why, "warn");
   busy_ = false;
   if (jobActive_ && !jobs_.empty()) {
@@ -65,7 +117,7 @@ void Modem::requestReset(const char *why) {
 }
 
 bool Modem::enqueue(const Job &job) {
-  if (st_ == St::DEAD || jobs_.size() >= JOB_QUEUE_MAX) return false;
+  if (st_ == St::DEAD || st_ == St::OFF || jobs_.size() >= JOB_QUEUE_MAX) return false;
   jobs_.push_back(job);
   return true;
 }
@@ -82,6 +134,8 @@ const char *Modem::stateName() const {
   switch (st_) {
     case St::DEAD:
       return lowPower_ ? "low_power" : "no_answer";
+    case St::OFF:
+      return "off";
     case St::SIM_WAIT:
       if (simStatus == "NOT INSERTED") return "no_sim";
       if (simStatus.startsWith("SIM PIN") || simStatus.startsWith("SIM PUK")) return "sim_locked";
@@ -213,6 +267,7 @@ void Modem::send(const String &cmd, Tag tag, uint32_t timeoutMs, bool wantPrompt
 
 void Modem::loop() {
   readPort();
+  if (st_ == St::OFF) return;
   uint32_t now = millis();
   if (call_ && now - lastRing_ > 9000) endCall(hangSent_ ? "rejected" : "missed");
   if (busy_) {
@@ -326,6 +381,24 @@ void Modem::idle(uint32_t now) {
     send("AT+CMGD=" + String(del_.front()), T_CMGD, 5000);
     return;
   }
+  // the network the owner chose in the panel: automatic, or one network (falls back to automatic
+  // by itself when that network is gone: COPS mode 4)
+  if (netWant_.length() && netWant_ != netDone_ && due(netNext_) && !call_) {
+    if (netWant_ != "auto") {
+      netSent_ = netWant_;
+      netNext_ = now + 300000;  // a failed choice is tried again after 5 minutes
+      send("AT+COPS=4,2,\"" + netWant_ + "\"", T_COPS_SET, 120000);
+      return;
+    }
+    if (copsMode_ == 0) {
+      netDone_ = netWant_;  // already automatic
+    } else if (copsMode_ > 0) {
+      netSent_ = netWant_;
+      netNext_ = now + 300000;
+      send("AT+COPS=0", T_COPS_SET, 120000);
+      return;
+    }  // copsMode_ < 0: wait for the next AT+COPS? reading
+  }
   if (scanDue_ || due(nextScan_)) {
     scanDue_ = false;
     nextScan_ = now + 60000;
@@ -401,6 +474,10 @@ void Modem::onResult(Tag tag, Res res, const String &resp) {
         tries_ = 0;
       } else if (++tries_ > 15) {  // "SMS not ready yet" can take ~20 s after power on
         evLog(slot, String(NET_CMDS[step_]) + " failed: " + resp, "warn");
+        if (strcmp(NET_CMDS[step_], "AT+CMGF=0") == 0) {  // SMS cannot work without PDU mode
+          requestReset("it did not switch to PDU mode");
+          break;
+        }
         step_++;
         tries_ = 0;
       } else {
@@ -429,7 +506,20 @@ void Modem::onResult(Tag tag, Res res, const String &resp) {
         int a = s.indexOf('"');
         int b = s.lastIndexOf('"');
         op = (a >= 0 && b > a) ? s.substring(a + 1, b) : "";
+        copsMode_ = s.length() ? s.toInt() : -1;  // "0,0,"Operator"": 0 = automatic
       }
+      break;
+
+    case T_COPS_SET:
+      if (ok) {
+        netDone_ = netSent_;
+        evLog(slot, netSent_ == "auto" ? String("network: automatic") : "network " + netSent_ + " chosen");
+      } else {
+        String why = resp;
+        why.trim();
+        evLog(slot, "could not choose network " + netSent_ + ": " + (why.length() ? why : String("no answer")), "warn");
+      }
+      nextPoll_ = now;  // read the operator and registration again
       break;
 
     case T_CBC:
@@ -561,7 +651,9 @@ void Modem::startJob() {
   Job &j = jobs_.front();
   jobActive_ = true;
   if (j.type == Job::AT) {
-    send(j.cmd, T_AT_USER, 30000);
+    String c = j.cmd;
+    c.toUpperCase();
+    send(j.cmd, T_AT_USER, c.startsWith("AT+COPS=?") ? 180000 : 30000);  // a network search takes minutes
     return;
   }
   if (j.parts.empty()) {

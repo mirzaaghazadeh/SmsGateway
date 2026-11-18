@@ -8,9 +8,10 @@ import { emit } from './webhook.js';
 import { updateOffer } from './firmware.js';
 import { ledForDevice } from './led.js';
 import { forwardSms, forwardCall } from './telegram.js';
+import { simConfig } from './lines.js';
 
 export const ONLINE_MS = 30_000;
-const JOB_TIMEOUT_MS = 180_000;
+const JOB_TIMEOUT_MS = 240_000; // a network search (AT+COPS=?) can take 3 minutes
 const MAX_ATTEMPTS = 3;
 const SAMPLE_EVERY_MS = 60_000;
 const SLOTS = [1, 2];
@@ -19,6 +20,9 @@ export const csqToDbm = (csq) => (csq == null || csq === 99 || csq < 0 ? null : 
 const sha1 = (s) => createHash('sha1').update(s).digest('hex');
 const str = (v, max = 200) => (v == null ? null : String(v).slice(0, max));
 const int = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Math.round(Number(v)) : null);
+// The gateway sends 0 when it has no reading (Wi-Fi not joined, SIM800L not answering): store nothing
+const rssi = (v) => { const n = int(v); return n != null && n < 0 && n > -127 ? n : null; };
+const millivolts = (v) => { const n = int(v); return n != null && n > 0 ? n : null; };
 
 export function callMode() {
   return setting('call_mode', 'reject');
@@ -95,7 +99,7 @@ export function handleSync(body, now = Date.now()) {
          reset_reason = excluded.reset_reason, last_seen = excluded.last_seen, offline = 0`
     ).run(
       id, str(body.name, 40) || 'SMS Gateway', str(body.fw, 20), str(wifi.ip, 40), str(wifi.ssid, 40),
-      int(wifi.rssi), int(body.heap), int(body.uptime), boot, str(body.reset, 40), now, now
+      rssi(wifi.rssi), int(body.heap), int(body.uptime), boot, str(body.reset, 40), now, now
     );
     if (dev?.fw && body.fw && dev.fw !== str(body.fw, 20)) {
       log(`Firmware changed: ${dev.fw} -> ${body.fw}`, { device_id: id });
@@ -116,7 +120,7 @@ export function handleSync(body, now = Date.now()) {
            mv = excluded.mv, queue = excluded.queue, updated_at = excluded.updated_at`
       ).run(
         id, slot, state, str(s.sim, 30), str(s.imei, 20), str(s.iccid, 24), str(s.op, 40),
-        int(s.csq), int(s.reg), int(s.mv), int(s.queue), now
+        int(s.csq), int(s.reg), millivolts(s.mv), int(s.queue), now
       );
     }
 
@@ -127,8 +131,8 @@ export function handleSync(body, now = Date.now()) {
         `INSERT INTO samples (device_id, ts, wifi_rssi, heap, s1_csq, s1_reg, s1_mv, s2_csq, s2_reg, s2_mv)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
-        id, now, int(wifi.rssi), int(body.heap),
-        int(by[1]?.csq), int(by[1]?.reg), int(by[1]?.mv), int(by[2]?.csq), int(by[2]?.reg), int(by[2]?.mv)
+        id, now, rssi(wifi.rssi), int(body.heap),
+        int(by[1]?.csq), int(by[1]?.reg), millivolts(by[1]?.mv), int(by[2]?.csq), int(by[2]?.reg), millivolts(by[2]?.mv)
       );
     }
 
@@ -148,7 +152,7 @@ export function handleSync(body, now = Date.now()) {
     return {
       ack,
       jobs,
-      config: { calls: callMode(), interval, led: ledForDevice() },
+      config: { calls: callMode(), interval, led: ledForDevice(), sims: simConfig(id) },
       update: updateOffer(id, str(body.fw, 20), now),
       time: Math.floor(now / 1000),
     };

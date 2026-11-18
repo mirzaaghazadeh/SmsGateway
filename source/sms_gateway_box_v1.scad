@@ -1,36 +1,27 @@
 // =====================================================================
-//  SMS / missed-call gateway box  v6   (NO metal screws, NO inserts)  <- print this one
-//  v6:
+//  SMS / missed-call gateway box  v1 (hand-wired build)   NO metal screws, NO inserts
+//  ESP32-S3 + 2x SIM800L + 2x LM2596 + 0.96" OLED, wired with Dupont jumpers.
+//  (The PCB build is v2: source/sms_gateway_box_v2.scad + pcb/.)
 //   - ESP32 sits 20 mm up on 2 posts: Dupont plugs on its downward pins fit underneath, and
 //     the gap between the posts lets wires and the SIM1 antenna cable pass under it. The lid's
-//     inner rim has a short gap above the (now higher) USB-C opening
-//   - back-wall antenna holes have a 2 mm ring on the inside (4.4 mm total) for the 195 mm
-//     L antennas; the back lid latch moved to x 50 to clear it
+//     inner rim has a short gap above the USB-C opening
+//   - USB-C sockets sit 2 mm back inside a recess (the plug body goes into it), so the metal
+//     sockets are not on show
+//   - back-wall antenna holes (6.6 mm, for an IPEX -> SMA bulkhead pigtail) have a 2 mm ring
+//     on the inside (4.4 mm total) for the 195 mm L antennas
+//   - SIM800L sits low (4.5 mm): its 6-pin header points UP, Dupont plugs on top. Its frame has
+//     crush ribs, so the board presses in and cannot rattle, and lowered front corners, so the
+//     IPEX antenna plug can be pushed on and its cable can leave sideways
+//   - SIM card goes in from outside through a 16 x 3.2 mm slot in the front wall
 //   - a trough beside each SIM800L for its 1000 uF capacitor (up to 10.5 x 21 mm, hot glue)
-//  v5:
+//   - LM2596 bays: crush ribs, 2 snap pins in its M3 holes, ledges
+//   - 12 V jack hole (DC-099, 11.2 mm) in the right wall's back corner
 //   - lid clicks on with 4 snap latches (arms on the lid, grooves inside the walls, nothing
-//     shows outside); the old bumps + dimples are gone
-//   - lid text: only "SMS GATEWAY", big + bold + 1 mm deep (optional 2-colour inlay part)
+//     shows outside)
+//   - lid text: "SMS GATEWAY", big + bold + 1 mm deep (optional 2-colour inlay part)
 //   - vents are slanted 45 deg, so you cannot look into the box through them
-//   - no wall-hanging key-holes in the floor
-//   - back-wall antenna holes are 6.6 mm, the fit for an IPEX -> SMA bulkhead pigtail
-//   - LM2596 bays: crush ribs, 2 snap pins in its M3 holes, ledges, fit test
-//   - 12 V jack hole (DC-099, 11.2 mm) moved to the right wall's back corner
-//  v3: real YD-ESP32-S3 size (28 mm wide), antenna kept inside, plug-sized USB-C opening
-//  v4 (after the v3 fit prints):
-//   - SIM800L bay was loose (~1 mm play each way): board size 25 x 23, tighter frame and
-//     small crush ribs that the PCB edge squashes, so the board presses in and cannot rattle
-//   - USB-C sockets no longer end flush with the outside: they sit 2 mm back inside a
-//     recess (the plug body goes into it), so the metal sockets are not on show
-//   - SIM card slot was too small for the card: now 16 x 3.2 mm
-//   - SIM bay frame is lowered at both front corners, so the IPEX antenna plug can be
-//     pushed on and its cable can leave sideways
-//   - SIM800L sits low again (4.5 mm): its 6-pin header points UP, Dupont plugs on top. The
-//     corner pads stay clear of the header's solder points underneath
-//   - LM2596 + OLED: snap pins in their holes, the boards click on (squeeze the tips to remove)
-//   - OLED: v3 hooks + glass pocket cracked the glass. Now the PCB sits on 4 standoffs at its
-//     mounting holes, 4 pegs locate it, and the glass touches nothing
-//  ESP32-S3 + 2x SIM800L + 2x LM2596 + 0.96" OLED
+//   - OLED: the PCB sits on 4 standoffs at its mounting holes with snap pins; the glass
+//     touches nothing
 //
 //  Everything is held by printed features:
 //   - lid: friction lip for alignment + 4 snap latches; pull it open at the front finger notch
@@ -97,8 +88,8 @@ cap_trough = [10.8, 22, 6.5];   // groove diameter, length, block height
 cap_gap    = 1.0;               // trough <-> SIM frame
 
 // ---------------- boards (MEASURE, then edit) ----------------
-// ESP32-S3: YD-ESP32-S3 ("YD-ESP32-23 2022-V1.3", N16R8). v2 used DevKitC-1 sizes (25.4 wide):
-// this board is 28 wide, so it sat ON the frame instead of in it.
+// ESP32-S3: YD-ESP32-S3 ("YD-ESP32-23 2022-V1.3", N16R8). 28 mm wide, wider than the
+// DevKitC-1 (25.4).
 esp_pcb     = [57.0, 28.0];  // PCB only: without antenna and without USB-C overhang   <- MEASURE
 esp_t       = 1.6;
 esp_ant     = [6.5, 18.5];   // module antenna sticking out past the PCB end (length, width) <- MEASURE
@@ -106,10 +97,10 @@ esp_usb_out = 1.0;           // how far the USB-C sockets stick out past the PCB
 esp_usb_dy  = 6.2;           // each USB-C socket centre, measured from the board centre line
 esp_usb_h   = 3.3;           // USB-C socket height above the PCB top
 esp_lift    = 20;            // PCB underside above the floor: yellow headers (2.5) + Dupont plugs (14)
-                             // hang below, ~3.5 mm left for the wires to bend (v5: 11, no room)
+                             // hang below, ~3.5 mm left for the wires to bend (11 left no room)
 esp_clr     = 0.3;           // side / end clearance around the PCB
 esp_y       = 52;            // board front edge, inside coordinates (USB end against the LEFT wall)
-// USB-C (v4): seen from outside there is one rounded recess, usb_recess deep. At its floor each
+// USB-C: seen from outside there is one rounded recess, usb_recess deep. At its floor each
 // socket goes through its own tight hole in a usb_skin thick plate, so you cannot see into the
 // box. The plug body (overmold) goes into the recess, so the plug still seats fully.
 // Wall + recess + skin do not fit in 2.4 mm, so a small pad on the inside of the wall adds the
@@ -120,19 +111,19 @@ usb_chamfer = 0.6;           // 45 deg edge on the recess opening
 usb_skin    = 1.0;           // plate at the recess floor; the sockets pass through it
 usb_hole    = [9.0, 3.3];    // USB-C socket outline (W x H)
 usb_hole_c  = 0.4;           // clearance around each socket
-usb_z_adj   = 0.3;           // v3 fit print: sockets sat 0.3 mm higher than drawn (gap under them)
+usb_z_adj   = 0.3;           // early fit print: sockets sat 0.3 mm higher than drawn (gap under them)
 usb_pcb_gap = 0.2;           // PCB edge <-> end-stop pad
 usb_stop    = usb_recess + usb_skin - wall;       // end-stop face, inside coords (+ = into the box)
 esp_x0      = usb_stop + usb_pcb_gap;             // PCB USB edge
 esp_len     = esp_x0 + esp_pcb[0] + esp_ant[0];   // whole thing, antenna tip included
-// SIM800L red board (SIM holder is underneath). v3 used 25.5 x 23.5 + 0.5 clearance and the
-// board rattled ~1 mm each way; sellers list 25 x 23.  If you have calipers, measure + edit.
+// SIM800L red board (SIM holder is underneath). 25.5 x 23.5 + 0.5 clearance let the board
+// rattle ~1 mm each way; sellers list 25 x 23.  If you have calipers, measure + edit.
 sim   = [25.0, 23.0];  sim_t  = 1.0;
 sim_clr = 0.3;     // clearance per side to the rigid frame
 sim_rib = 0.45;    // crush ribs stick out this far: the PCB edge squashes them -> snug, no play
 // 6-pin header (NET VCC RST RXD TXD GND) soldered pointing UP on the right edge, the IPEX side:
 // plastic + Dupont plugs on top, only solder points underneath. So the board sits low.
-// (v4 had it 20 mm up for pins pointing down; with pins up there is no room above for that.)
+// (Pins pointing down would need it 20 mm up; with pins up there is no room above for that.)
 sim_hdr   = [1.9, 5.0, 6];  // hole row from the right edge, first hole from the front edge, pins (photo)
 sim_lift  = 4.5;            // board underside above the floor
 sim_hdr_up = true;
@@ -149,9 +140,8 @@ buck_clr  = 0.35;
 buck_flip = true;   // true: IN end toward the right wall (12 V jack), OUT end toward the other boards
 // wires: solder them to the 4 corner pads, or solder single header pins pointing UP and use
 // Dupont plugs (the supports underneath stay clear of the corner solder points either way).
-// 0.96" I2C OLED (SSD1306, VCC GND SCL SDA). v3 pressed it in with snap hooks (one of them on
-// the ribbon-cable edge) against a glass pocket in the wrong place -> the glass cracked.
-// v4: the PCB rests on 4 standoffs at its mounting holes and 4 pegs go through the holes.
+// 0.96" I2C OLED (SSD1306, VCC GND SCL SDA). Snap hooks pressing on the glass cracked it, so
+// the PCB rests on 4 standoffs at its mounting holes and 4 pegs go through the holes.
 // The glass hangs oled_gap below the lid and touches nothing. Melt each peg tip with a
 // soldering iron (or a drop of glue) to hold the board. Sizes are from photos  <- MEASURE
 // Local OLED coords: (0,0) = centre of the 4 holes, +y = pin edge (toward the box back),
@@ -165,7 +155,7 @@ oled_post  = oled_stack + oled_gap;   // standoff height under the lid
 oled_post_d = 3.4;          // standoff size; cut flat 1 mm from the hole centre on the glass side
 oled_peg_d = 1.5;           // pegs in the ~2.1 mm holes (room for hole-spacing error)
 oled_peg_up = 1.3;          // peg length past the PCB back, to melt over
-oled_snap  = true;          // v5: snap pins that click over the PCB (false = plain pegs to melt)
+oled_snap  = true;          // snap pins that click over the PCB (false = plain pegs to melt)
 oled_pin   = [1.9, 2.7, 0.7];   // snap pin: shaft, barb, slot (holes measured ~2.1-2.4)
 glass   = [26.7, 19.3];     // glass incl. the chip ledge (ledge at the ribbon edge, -y)
 glass_dy = 4.6;             // glass edge from the PCB pin edge
@@ -180,7 +170,7 @@ bay_rim = 1.2;
 // SIM card from OUTSIDE: board edge with the card slot sits sim_gap from the front wall,
 // so the card goes through a thin slot straight into the holder.
 sim_gap   = sim_clr;        // board front edge <-> inside of the front wall (the wall is the front frame)
-sim_card  = [16.0, 3.2];    // wall slot: micro-SIM is 15 x 12 x 0.76; v3's 13 x 2.4 was too small for the card
+sim_card  = [16.0, 3.2];    // wall slot: micro-SIM is 15 x 12 x 0.76; 13 x 2.4 was too small for the card
 sim_card_z = sim_lift - 0.9;// card centre height above the floor (holder hangs under the board) <- CHECK
 sim_card_x = sim[0]/2;      // card centre, from the board's left edge                          <- CHECK
 sim1_p  = [6, sim_gap];     // SIM holder edge faces the FRONT wall; IPEX antenna socket on a front corner
@@ -510,8 +500,8 @@ module usb_cut() {
 module sim_cut() {
     translate([-sim_card[0]/2, -wall - 0.1, sim_card_z - sim_card[1]/2])
         cube([sim_card[0], wall + sim_gap + 2, sim_card[1]]);
-    // finger bevel round the slot, 1.4 mm deep. v6: was a round scoop, whose top hung in the air
-    // on the tall box wall (slicer: "floating cantilever"); now 45 deg on top, prints clean
+    // finger bevel round the slot, 1.4 mm deep. A round scoop's top hung in the air on the tall
+    // box wall (slicer: "floating cantilever"); 45 deg on top prints clean
     sd = 1.4; ex = 2.8;
     hull() {
         translate([-sim_card[0]/2 - ex, -wall - 0.1, sim_card_z - sim_card[1]/2 - 1.8])
@@ -559,10 +549,9 @@ module base() {
         translate([out_w - wall - 0.1, wall + dc_p[0], floor_t + dc_p[1]])
             rotate([0, 90, 0]) cylinder(d = dc_d, h = wall + 0.2);
 
-        // --- two antenna holes, back wall: v5 sized for the SMA-female bulkhead of an
-        //     IPEX -> SMA pigtail (1/4"-36 thread, 8 mm nut). v4 had 9 mm (needed washers) ---
+        // --- two antenna holes, back wall: sized for the SMA-female bulkhead of an
+        //     IPEX -> SMA pigtail (1/4"-36 thread, 8 mm nut) ---
         for (ax = ant_x) translate([wall + ax, out_d - wall, floor_t + ant_z]) ant_cut();
-        // (v5: no wall-hanging key-holes in the floor)
     }
 }
 

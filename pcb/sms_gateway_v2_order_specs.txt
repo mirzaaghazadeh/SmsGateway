@@ -1,0 +1,46 @@
+SMS GATEWAY v2 CARRIER PCB - REQUEST FOR QUOTATION
+==================================================
+
+Please quote (1) PCB only and (2) PCB + assembly (turnkey), for 10 pcs (please also give the 20 pcs price).
+Please include the lead time and the shipping cost to: ______________________
+
+PCB FABRICATION
+---------------
+Layers ............... 2
+Material ............. FR-4, TG130-140
+Board size ........... 100.0 x 100.0 mm, rounded corners R3 (single board; panelize as you like)
+Thickness ............ 1.6 mm
+Copper ............... 1 oz (35 um) both sides
+Surface finish ....... HASL lead-free (HASL with lead is also OK if cheaper)
+Solder mask .......... green, both sides. Vias tented
+Silkscreen ........... white, both sides
+Min track / space .... 0.40 mm / 0.25 mm
+Min hole ............. 0.40 mm (vias). 183 plated holes, 4 non-plated 3.2 mm holes
+Impedance control .... no.   Gold fingers / castellated holes: no
+Electrical test ...... yes (flying probe)
+Files ................ sms_gateway_v2_gerbers.zip (RS-274X Gerber + Excellon drill, PTH and NPTH separate)
+
+PCB ASSEMBLY (PCBA)
+-------------------
+Type ................. turnkey: you source every part in the BOM (equivalent brands OK)
+Parts ................ all through-hole (THT), top side only. No SMD, no stencil needed
+Part lines ........... 15 BOM lines, 20 parts, 91 THT solder joints per board
+Do not place ......... U1, U2 (LM2596 modules)
+Optional, separate price: supply and solder 2x LM2596 buck module (blue, 43 x 21 mm)
+                       per board on 4 straight header pins each (do not adjust the voltage)
+Not supplied ......... ESP32-S3 dev board, SIM800L modules (plugged in later by the customer)
+Important ............ J2 goes into the OUTER hole row only; mind polarity of C1, C2, C3, D1, D2
+                       and U3 (lies flat, legs bent 90 deg, metal tab up, pin 1 in the square pad);
+                       jumper cap on JP1. See sms_gateway_v2_assembly_drawing.pdf
+Solder ............... lead-free OK, no-clean flux OK
+Test ................. visual inspection only (no functional test)
+Approval ............. please send a photo of the first assembled board before shipping
+Packing .............. ESD bags
+
+FILES IN THIS PACKAGE
+---------------------
+sms_gateway_v2_gerbers.zip                   Gerber + drill files
+sms_gateway_v2_BOM.xlsx (.csv)               bill of materials
+sms_gateway_v2_pick_and_place.xlsx (.csv)    centroid file, origin bottom-left, mm
+sms_gateway_v2_assembly_drawing.pdf          assembly drawing with polarity and DNP notes
+render_top.png, render_bottom.png    pictures of the board

@@ -1,4 +1,4 @@
-import { h, clear, icon, api, poll, toast, busy, segmented, emptyState, plural } from '../ui.js';
+import { h, clear, icon, api, poll, toast, busy, segmented, emptyState, plural, simTag, simOn } from '../ui.js';
 import { analyzeText, MAX_PARTS } from '/js/gsm.js';
 import { messageRow } from './parts.js';
 
@@ -110,8 +110,7 @@ function compose(prefill, onSent) {
   const to = h('input', { class: 'input mono', id: 'to', type: 'tel', inputmode: 'tel', autocomplete: 'off', placeholder: '+1 555 123 4567', value: prefill, required: true });
   const sim = h('select', { class: 'select', id: 'sim' },
     h('option', { value: '0' }, 'Any ready SIM'),
-    h('option', { value: '1' }, 'SIM 1'),
-    h('option', { value: '2' }, 'SIM 2')
+    [1, 2].filter((s) => simOn(s)).map((s) => h('option', { value: String(s) }, simTag(s)))
   );
   const text = h('textarea', { class: 'textarea', id: 'text', dir: 'auto', required: true, placeholder: 'Message' });
   const left = h('span', {});

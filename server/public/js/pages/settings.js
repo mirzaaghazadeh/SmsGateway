@@ -51,7 +51,7 @@ function telegramPanel(tg, reload) {
   // one row per line (gateway + SIM slot) with its chat IDs
   const inputs = new Map();
   let lastInput = null;
-  const lineName = (l) => `${l.gateway} · SIM ${l.slot}`;
+  const lineName = (l) => `${l.gateway} · ${l.name ? `${l.name} (SIM ${l.slot})` : `SIM ${l.slot}`}`;
   const rows = tg.lines.map((l) => {
     const key = `${l.device}:${l.slot}`;
     const input = h('input', {

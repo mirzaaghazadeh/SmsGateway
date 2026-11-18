@@ -1,4 +1,4 @@
-import { h, clear, api, segmented, panel, emptyState, toast } from '../ui.js';
+import { h, clear, api, segmented, panel, emptyState, toast, simTag } from '../ui.js';
 import { barChart, legend } from '../charts.js';
 
 const RANGES = [
@@ -60,7 +60,7 @@ export default function analytics(page) {
         panel('By SIM card', null, h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
           h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', { class: 'r' }, 'Received'), h('th', { class: 'r' }, 'Sent'), h('th', { class: 'r' }, 'Failed'), h('th', { class: 'r' }, 'Calls'))),
           h('tbody', {}, [1, 2].map((s) => h('tr', {},
-            h('td', {}, h('span', { class: 'row', style: { gap: '8px' } }, h('i', { class: 'key', style: { background: `var(--sim${s})`, width: '10px', height: '10px', borderRadius: '3px' } }), `SIM ${s}`)),
+            h('td', {}, h('span', { class: 'row', style: { gap: '8px' } }, h('i', { class: 'key', style: { background: `var(--sim${s})`, width: '10px', height: '10px', borderRadius: '3px' } }), simTag(s))),
             ...['received', 'sent', 'failed', 'calls'].map((k) => h('td', { class: 'r num' }, st.bySim[s][k]))
           )))
         )))
