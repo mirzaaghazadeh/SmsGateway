@@ -2,9 +2,6 @@
 
 **English** · [فارسی](README.fa.md)
 
-> **Persian readers:** the whole guide is also in Persian, with the build lessons:
-> [README.fa.md](README.fa.md) · راهنمای کامل به فارسی: [README.fa.md](README.fa.md)
-
 A DIY two-SIM **SMS and missed-call gateway**: an ESP32-S3 with two SIM800L GSM modules in a
 3D-printed, screwless case, plus a self-hosted Node.js server with a web panel. Build it the way
 that suits you: **v1** is hand-wired in a printed case, **v2** puts everything on a PCB in its own
