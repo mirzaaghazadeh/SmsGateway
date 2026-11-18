@@ -47,6 +47,12 @@ function telegramPanel(tg, reload) {
   });
   const sms = h('input', { type: 'checkbox', checked: tg.sms });
   const calls = h('input', { type: 'checkbox', checked: tg.calls });
+  const alertDevice = h('input', { type: 'checkbox', checked: tg.alert_device });
+  const alertSignal = h('input', { type: 'checkbox', checked: tg.alert_signal });
+  const minutes = h('input', {
+    class: 'input', type: 'number', min: 0, max: 120, value: String(tg.alert_minutes),
+    style: { width: '76px', display: 'inline-block', padding: '4px 8px', margin: '0 4px' }, 'aria-label': 'Minutes without network before the alert',
+  });
 
   // one row per line (gateway + SIM slot) with its chat IDs
   const inputs = new Map();
@@ -129,7 +135,11 @@ function telegramPanel(tg, reload) {
       e.preventDefault();
       await busy(save, async () => {
         try {
-          const body = { sms: sms.checked, calls: calls.checked, routes: Object.fromEntries([...inputs].map(([k, i]) => [k, i.value])) };
+          const body = {
+            sms: sms.checked, calls: calls.checked,
+            alert_device: alertDevice.checked, alert_signal: alertSignal.checked, alert_minutes: Number(minutes.value),
+            routes: Object.fromEntries([...inputs].map(([k, i]) => [k, i.value])),
+          };
           if (token.value.trim()) body.token = token.value.trim();
           const r = await api('/api/telegram', { method: 'PUT', body });
           toast(r.bot ? `Saved. Messages go out through @${r.bot.username}.` : 'Saved');
@@ -146,13 +156,19 @@ function telegramPanel(tg, reload) {
         h('ol', { class: 'steps small' },
           h('li', {}, 'In Telegram, open ', h('a', { href: 'https://t.me/BotFather', target: '_blank', rel: 'noopener' }, '@BotFather'), ', send /newbot and follow the steps. Paste the token it gives you below.'),
           h('li', {}, 'Open your new bot and press Start. For a group, add the bot to the group and write any message there.'),
-          h('li', {}, 'Press Find chats, click a SIM line below, then click a chat to add it. One SIM can go to several chats.')
+          h('li', {}, 'Press Find chats, click a SIM line below, then click a chat to add it. One SIM can go to several chats.'),
+          h('li', {}, 'Send ', h('code', {}, '/stats'), ' to the bot any time: it answers with every gateway, SIM card, signal and the last 24 hours. Only the chats below get an answer.')
         ),
+        tg.problem ? h('p', { class: 'note' }, icon('alert'), h('span', {}, tg.problem)) : null,
         h('div', { class: 'field' }, h('label', { for: 'tgtoken' }, 'Bot token'), token)
       ),
       h('div', { class: 'form' },
         h('label', { class: 'radio' }, sms, h('div', {}, h('b', {}, 'Send received SMS'), h('span', {}, 'Every SMS a SIM receives, with the sender and the text.'))),
         h('label', { class: 'radio' }, calls, h('div', {}, h('b', {}, 'Send missed calls'), h('span', {}, 'Who called which SIM.'))),
+        h('label', { class: 'radio' }, alertDevice, h('div', {}, h('b', {}, 'Alert: gateway offline'),
+          h('span', {}, 'When the gateway stops checking in (no power or Wi-Fi), and when it is back. Goes to every chat of its SIMs.'))),
+        h('label', { class: 'radio' }, alertSignal, h('div', {}, h('b', {}, 'Alert: SIM lost the network'),
+          h('span', {}, 'When a SIM has had no network for', minutes, 'minutes, and when it is back. Short drops send nothing.'))),
         h('div', { class: 'row' }, find),
         found
       )

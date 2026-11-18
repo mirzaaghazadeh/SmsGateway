@@ -54,6 +54,61 @@ export function callMessage({ number, line }) {
   return `📞 Missed call from <b>${esc(number)}</b>\n<i>${esc(line)}</i>`;
 }
 
+// ---------- /stats and alerts ----------
+
+export const STATE_TEXT = {
+  ready: 'ready', searching: 'searching for the network', starting: 'starting', no_sim: 'no SIM card',
+  sim_locked: 'SIM PIN is on', denied: 'refused by the network', no_answer: 'the SIM800L is not answering',
+  low_power: 'supply voltage too low', off: 'off',
+};
+
+export function quality(dbm) {
+  if (dbm == null) return '';
+  return dbm >= -73 ? 'excellent' : dbm >= -85 ? 'good' : dbm >= -99 ? 'fair' : 'weak';
+}
+
+export function duration(ms) {
+  const m = Math.max(0, Math.round(ms / 60_000));
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h} h ${m % 60} min`;
+  return `${Math.floor(h / 24)} d ${h % 24} h`;
+}
+
+// gateways: [{ name, online, lastSeen, fw, ssid, rssi, uptime, sims: [{ label, operator, state, dbm, mv }] }]
+export function statsMessage({ gateways, counts, now = Date.now() }) {
+  const out = ['📊 <b>SMS gateway status</b>'];
+  if (!gateways.length) out.push('', 'No gateway has checked in yet.');
+  for (const g of gateways) {
+    const state = g.online ? '🟢 online' : `🔴 offline for ${duration(now - g.lastSeen)}`;
+    out.push('', `<b>${esc(g.name)}</b> · ${state}${g.fw ? ` · firmware ${esc(g.fw)}` : ''}`);
+    const wifi = [g.ssid ? `Wi-Fi ${esc(g.ssid)}${g.rssi != null ? ` ${g.rssi} dBm` : ''}` : null,
+      g.uptime ? `up ${duration(g.uptime * 1000)}` : null].filter(Boolean).join(' · ');
+    if (wifi) out.push(wifi);
+    for (const s of g.sims) {
+      const parts = [s.operator ? esc(s.operator) : null, STATE_TEXT[s.state] || esc(s.state || 'not reported'),
+        s.dbm != null ? `${s.dbm} dBm (${quality(s.dbm)})` : null, s.mv ? `${(s.mv / 1000).toFixed(2)} V` : null];
+      out.push(`• ${esc(s.label)}: ${parts.filter(Boolean).join(', ')}`);
+    }
+  }
+  const c = counts;
+  out.push('', `<b>Last 24 h</b>: ${c.received} received · ${c.sent} sent · ${c.failed} failed · ${c.calls} missed calls`
+    + (c.pending ? ` · ${c.pending} waiting to send` : ''));
+  return out.join('\n');
+}
+
+export function deviceAlert({ name, online, lastSeen, offlineFor, now = Date.now() }) {
+  return online
+    ? `🟢 <b>${esc(name)}</b> is back online\nIt was offline for ${duration(offlineFor)}.`
+    : `🔴 <b>${esc(name)}</b> is offline\nNo check-in for ${duration(now - lastSeen)}. Check its power and Wi-Fi.`;
+}
+
+export function signalAlert({ label, gateway, lost, state, minutes, operator, dbm }) {
+  return lost
+    ? `📵 <b>${esc(label)}</b> has no network\n${esc(STATE_TEXT[state] || state)}, for ${minutes} min · ${esc(gateway)}`
+    : `📶 <b>${esc(label)}</b> is back on the network\n${[operator ? esc(operator) : null, dbm != null ? `${dbm} dBm` : null].filter(Boolean).join(', ') || 'ready'} · ${esc(gateway)}`;
+}
+
 // Chat IDs as typed in the panel: "123, -100456 @mychannel" -> ['123', '-100456', '@mychannel'].
 export const CHAT_RE = /^(-?\d{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$/;
 export function parseChatIds(v) {

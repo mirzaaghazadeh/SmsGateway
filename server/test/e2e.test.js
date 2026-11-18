@@ -19,6 +19,11 @@ let seq = 0;
 // A stand-in for the Telegram Bot API: one valid token, chat "403" has blocked the bot.
 const TG_TOKEN = '123456789:' + 'A'.repeat(35);
 const tgSent = [];
+// what people "send to the bot"; the server reads them with getUpdates
+const tgUpdates = [
+  { update_id: 1, message: { message_id: 1, chat: { id: 111, type: 'private', first_name: 'Ada' }, text: 'hello' } },
+  { update_id: 2, my_chat_member: { chat: { id: -100222, type: 'supergroup', title: 'Codes' } } },
+];
 const tgReply = (res, status, obj) => {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json');
@@ -31,12 +36,12 @@ async function telegramApi(req, res) {
   if (!m || m[1] !== TG_TOKEN) return tgReply(res, 401, { ok: false, error_code: 401, description: 'Unauthorized' });
   const b = raw ? JSON.parse(raw) : {};
   if (m[2] === 'getMe') return tgReply(res, 200, { ok: true, result: { id: 42, is_bot: true, first_name: 'Gateway', username: 'test_gateway_bot' } });
-  if (m[2] === 'getUpdates') {
-    return tgReply(res, 200, { ok: true, result: [
-      { update_id: 1, message: { message_id: 1, chat: { id: 111, type: 'private', first_name: 'Ada' }, text: '/start' } },
-      { update_id: 2, my_chat_member: { chat: { id: -100222, type: 'supergroup', title: 'Codes' } } },
-    ] });
+  if (m[2] === 'getUpdates') { // long polling, shortened: wait up to 0.3 s for something new
+    const fresh = () => tgUpdates.filter((u) => u.update_id >= (b.offset || 0));
+    for (let i = 0; i < 6 && !fresh().length; i++) await new Promise((r) => setTimeout(r, 50));
+    return tgReply(res, 200, { ok: true, result: fresh() });
   }
+  if (m[2] === 'setMyCommands') return tgReply(res, 200, { ok: true, result: true });
   if (m[2] === 'sendMessage') {
     if (String(b.chat_id) === '403') return tgReply(res, 403, { ok: false, error_code: 403, description: 'Forbidden: bot was blocked by the user' });
     tgSent.push(b);
@@ -352,7 +357,13 @@ test('Telegram: each SIM line goes to its own chats, a long SMS arrives joined',
   assert.ok(!JSON.stringify(t.body).includes(TG_TOKEN)); // the token never goes back to the browser
   assert.deepEqual(t.body.lines.map((l) => `${l.device}:${l.slot}`), ['aabbccddeeff:1', 'aabbccddeeff:2']);
 
-  const chats = await panel('GET', '/api/telegram/chats');
+  // the server reads the bot's messages in the background and notes who wrote
+  let chats;
+  for (let i = 0; i < 50; i++) {
+    chats = await panel('GET', '/api/telegram/chats');
+    if (chats.body.chats?.length >= 2) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
   assert.deepEqual(chats.body.chats.map((c) => `${c.id} ${c.name}`).sort(), ['-100222 Codes', '111 Ada']);
 
   assert.equal((await panel('PUT', '/api/telegram', { routes: { 'aabbccddeeff:1': 'hello' } })).status, 400);
@@ -390,6 +401,44 @@ test('Telegram: each SIM line goes to its own chats, a long SMS arrives joined',
   }
   await new Promise((r) => setTimeout(r, 300));
   assert.equal(tgSent.length, 4); // one Telegram message per chat, not one per SMS part
+});
+
+test('Telegram /stats: chats that are set up get the status, others learn their chat ID', async () => {
+  tgSent.length = 0;
+  await device(status());
+  tgUpdates.push({ update_id: 3, message: { message_id: 2, chat: { id: 111, type: 'private', first_name: 'Ada' }, text: '/stats' } });
+  tgUpdates.push({ update_id: 4, message: { message_id: 3, chat: { id: 999, type: 'private', first_name: 'Eve' }, text: '/stats@test_gateway_bot' } });
+  await waitFor(() => tgSent.length >= 2);
+  const stats = tgSent.find((m) => m.chat_id === '111').text;
+  assert.match(stats, /^📊 <b>SMS gateway status<\/b>/);
+  assert.match(stats, /<b>Home<\/b> · 🟢 online · firmware 1\.0\.0/);
+  assert.match(stats, /• SIM 1: Turkcell, ready, -73 dBm \(excellent\), 4\.01 V/);
+  assert.match(stats, /• SIM 2: no SIM card/);
+  assert.match(stats, /<b>Last 24 h<\/b>: \d+ received · \d+ sent · \d+ failed · \d+ missed calls/);
+  assert.match(tgSent.find((m) => m.chat_id === '999').text, /chat ID is <code>999<\/code>/);
+});
+
+test('Telegram alerts: a SIM that loses the network, and gets it back', async () => {
+  assert.equal((await panel('PUT', '/api/telegram', { alert_minutes: 500 })).status, 400);
+  const t = await panel('PUT', '/api/telegram', { alert_minutes: 0 }); // at once, for the test
+  assert.equal(t.body.alert_minutes, 0);
+  assert.equal(t.body.alert_signal, true);
+  await device(status());
+  tgSent.length = 0;
+  const lost = status();
+  lost.sims[0].state = 'searching';
+  lost.sims[0].reg = 2;
+  await device(lost);
+  await waitFor(() => tgSent.length >= 2);
+  assert.deepEqual(tgSent.map((m) => m.chat_id).sort(), ['-100222', '111']); // the chats of SIM 1
+  assert.match(tgSent[0].text, /^📵 <b>SIM 1<\/b> has no network\nsearching for the network, for 0 min · Home$/);
+  await device(lost); // still without network: nothing new
+  await device(status());
+  await waitFor(() => tgSent.length >= 4);
+  assert.match(tgSent[2].text, /^📶 <b>SIM 1<\/b> is back on the network\nTurkcell, -73 dBm · Home$/);
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(tgSent.length, 4);
+  await panel('PUT', '/api/telegram', { alert_minutes: 3 });
 });
 
 test('SIM lines: a name, a slot turned off, a chosen network', async () => {

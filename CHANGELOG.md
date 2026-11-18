@@ -6,6 +6,10 @@ were made for; the server deploys from `main`.
 
 ## Unreleased
 
+- Telegram: send `/stats` to the bot for the status of every gateway and SIM (signal, voltage,
+  operator) and the last 24 hours. Only chats added to a SIM line get an answer.
+- Telegram alerts, each with its own switch in Settings: a gateway goes offline or comes back, and
+  a SIM has had no network for a set number of minutes (3 by default) or gets it back.
 - Server: after a deploy the panel shows the new version at once. Its scripts and styles now load
   from a versioned path; before, Cloudflare kept them for up to 4 hours, so the browser ran the old
   panel code.

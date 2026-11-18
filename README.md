@@ -1,5 +1,10 @@
 # SmsGateway
 
+**English** · [فارسی](README.fa.md)
+
+> **Persian readers:** the whole guide is also in Persian, with the build lessons:
+> [README.fa.md](README.fa.md) · راهنمای کامل به فارسی: [README.fa.md](README.fa.md)
+
 A DIY two-SIM **SMS and missed-call gateway**: an ESP32-S3 with two SIM800L GSM modules in a
 3D-printed, screwless case, plus a self-hosted Node.js server with a web panel. Build it the way
 that suits you: **v1** is hand-wired in a printed case, **v2** puts everything on a PCB in its own
@@ -16,18 +21,29 @@ All case images are rendered from the OpenSCAD source in `source/`.
 This is a hobby project. I carried the idea around for about three years before I finally sat
 down and started building it.
 
-The idea is simple: instead of keeping a spare phone charged for every extra SIM card, put the
-SIM cards in one small box that stays plugged in at home and takes care of them:
+It started with a very ordinary problem. After moving to another country, I kept two SIM cards
+from home only to receive messages: bank and login codes (OTP), notices, and the odd missed call.
+That meant carrying an old phone around just for them, remembering to charge it, and finding its
+SMS inbox full at the worst moment, with a code that never arrived.
+
+So I built this for myself: put the SIM cards in one small box that stays plugged in at home and
+takes care of them:
 
 - Every SMS that arrives on either SIM goes over Wi-Fi to **your own server**, and so does every
   incoming call (rejected and logged as a missed call).
 - You read everything in a **web panel from anywhere**: verification codes, bank messages, who called.
-- Or get them in **Telegram**: each SIM can go to its own chats.
+- Or get them in **Telegram**: each SIM can go to its own chats, `/stats` answers with the status,
+  and you get an alert when the gateway goes offline or a SIM loses the network.
 - Your own apps can **send SMS** through a small HTTP API, or get a **webhook** the moment a
   message arrives.
 - It is built from cheap off-the-shelf parts (an ESP32 and two SIM800L modules) in a 3D-printed
   case, and the server is self-hosted: no SMS service subscription, and no third party reading
   your messages.
+- The SIM cards never fill up: each SMS is deleted from the card once the server has it.
+
+Later I added what others would need too, so anyone can build one: for the same reason (SIM cards
+from another country, codes you must not miss), or simply as a small self-hosted SMS gateway for
+their own apps, with the HTTP API, webhooks and Telegram.
 
 ## Features
 
@@ -233,7 +249,13 @@ welcome as issues or pull requests.
 **v2:** the PCB does all of it, with the same pins as below. You only add the two 12 V wires from
 the jack to the screw terminal and the 4 OLED jumpers.
 
-**v1:** see [ASSEMBLY.md](ASSEMBLY.md) for the full tables. In short:
+**v1:** every wire, pin by pin ([full size](docs/wiring_v1.png), [SVG](docs/wiring_v1.svg)):
+
+<p align="center">
+  <a href="docs/wiring_v1.png"><img src="docs/wiring_v1.png" alt="Complete wiring of the hand-wired build in five panels: the ESP32 pin row with each used pin labelled, power from the 12 V adapter through LM2596 A (4.0 V) and B (5.0 V), the OLED on 3V3, G, GPIO9 and GPIO8, an optional LM1084 fixed 4.0 V, and each SIM800L with its 1 kΩ and 3.3 kΩ resistors and 1000 µF capacitor" width="900"></a>
+</p>
+
+[ASSEMBLY.md](ASSEMBLY.md) has the same as tables. In short:
 
 - 12 V jack to both LM2596 inputs. **Set the outputs before connecting anything**: A = 4.0 V (both
   SIM800Ls, never above 4.2 V), B = 5.0 V (ESP32). A new LM2596 can output almost 12 V, and 12 V
@@ -320,8 +342,9 @@ restart). All SMS encoding and decoding (GSM-7 / UCS-2, multipart) happens on th
 
 **Telegram** (Settings → Telegram): paste a bot token from @BotFather and choose, for each SIM,
 the chats that get its SMS and missed calls. A long SMS arrives as one message, joined from its
-parts. The server sends them; the gateway does not talk to Telegram. Details in
-[server/README.md](server/README.md#telegram).
+parts. Send `/stats` to the bot for the status of every gateway and SIM, and turn on alerts for a
+gateway that goes offline or a SIM that loses the network. The server does all of this; the
+gateway does not talk to Telegram. Details in [server/README.md](server/README.md#telegram).
 
 ## Contributing
 

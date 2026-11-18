@@ -3,8 +3,8 @@
 // them, so a restart or a Telegram outage does not lose them.
 import { db, setting, setSetting, log } from './db.js';
 import { HttpError } from './http.js';
-import { smsMessages, callMessage, parseChatIds, CHAT_RE } from './tgformat.js';
-import { simLabel } from './lines.js';
+import { smsMessages, callMessage, parseChatIds, CHAT_RE, statsMessage, deviceAlert, signalAlert } from './tgformat.js';
+import { simLabel, allLines, lineOf } from './lines.js';
 
 const API = (process.env.TELEGRAM_API || 'https://api.telegram.org').replace(/\/+$/, '');
 const TOKEN_RE = /^\d{5,15}:[A-Za-z0-9_-]{30,60}$/;
@@ -57,6 +57,20 @@ function lineLabel(device, slot) {
 
 const chatsFor = (device, slot) => routes()[`${device}:${slot}`] || [];
 
+function gatewayName(device) {
+  const k = db.prepare('SELECT k.name kname, d.name dname FROM devices d LEFT JOIN device_keys k ON k.device_id = d.id WHERE d.id = ?').get(device);
+  return k?.kname || k?.dname || 'SMS Gateway';
+}
+
+// every chat of the lines of a gateway that are on
+function deviceChats(device) {
+  const all = allLines();
+  const r = routes();
+  return [...new Set([1, 2].filter((s) => lineOf(device, s, all).enabled).flatMap((s) => r[`${device}:${s}`] || []))];
+}
+
+const dbmOf = (csq) => (csq == null || csq === 99 || csq < 0 ? null : -113 + 2 * Math.min(csq, 31));
+
 // ---------- forwarding (called by gateway.js inside its transaction) ----------
 
 function enqueue(chats, texts, now) {
@@ -77,6 +91,159 @@ export function forwardCall({ device, slot, number, now = Date.now() }) {
   if (!token() || !enabled('telegram_calls') || !slot) return;
   const chats = chatsFor(device, slot);
   if (chats.length) enqueue(chats, [callMessage({ number, line: lineLabel(device, slot) })], now);
+}
+
+// ---------- alerts ----------
+
+const alertMinutes = () => Math.min(120, Math.max(0, Math.round(Number(setting('telegram_alert_minutes', '3'))) || 0));
+
+// The gateway went offline (no check-in for 90 s) or came back.
+export function alertDevice({ device, online, lastSeen, offlineFor, now = Date.now() }) {
+  if (!token() || !enabled('telegram_alert_device')) return;
+  const chats = deviceChats(device);
+  if (chats.length) enqueue(chats, [deviceAlert({ name: gatewayName(device), online, lastSeen, offlineFor, now })], now);
+}
+
+// A SIM that was ready and lost the network: an alert once it stays that way for the set minutes,
+// and another one when it is back. Brief drops send nothing.
+const watch = new Map(); // "<device>:<slot>" -> { since, state, alerted }
+
+export function lineState({ device, slot, prev, state, operator, csq, now = Date.now() }) {
+  const key = `${device}:${slot}`;
+  const w = watch.get(key);
+  if (state === 'ready') {
+    watch.delete(key);
+    if (w?.alerted) signalNotice(device, slot, { lost: false, operator, dbm: dbmOf(csq) }, now);
+    return;
+  }
+  if (state === 'off' || !lineOf(device, slot).enabled) {
+    watch.delete(key);
+    return;
+  }
+  if (w) w.state = state;
+  else if (prev === 'ready') watch.set(key, { since: now, state, alerted: false });
+}
+
+export function checkSignalAlerts(now = Date.now()) {
+  const wait = alertMinutes() * 60_000;
+  for (const [key, w] of watch) {
+    if (w.alerted || now - w.since < wait) continue;
+    const [device, slot] = key.split(':');
+    const d = db.prepare('SELECT last_seen FROM devices WHERE id = ?').get(device);
+    if (!d || now - d.last_seen > 90_000) continue; // the gateway itself is offline: that alert says it
+    w.alerted = true;
+    signalNotice(device, Number(slot), { lost: true, state: w.state, minutes: Math.round((now - w.since) / 60_000) }, now);
+  }
+}
+
+function signalNotice(device, slot, info, now) {
+  if (!token() || !enabled('telegram_alert_signal')) return;
+  const chats = chatsFor(device, slot);
+  if (chats.length) enqueue(chats, [signalAlert({ label: simLabel(device, slot), gateway: gatewayName(device), ...info })], now);
+}
+
+// ---------- commands: /stats ----------
+
+const POLL_S = Number(process.env.TELEGRAM_POLL_SECONDS || 25);
+const HELP = 'This bot sends the SMS and missed calls of your SMS gateway here.\n\n'
+  + '/stats: the gateways, their SIM cards, signal and the last 24 hours';
+let polling = false;
+let pollError = null;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function statsData(now) {
+  const all = allLines();
+  const sims = db.prepare('SELECT * FROM sims').all();
+  const gateways = db
+    .prepare('SELECT d.*, k.name kname FROM devices d JOIN device_keys k ON k.device_id = d.id ORDER BY k.added_at')
+    .all()
+    .map((d) => ({
+      name: d.kname || d.name || 'SMS Gateway', online: now - d.last_seen < 30_000, lastSeen: d.last_seen,
+      fw: d.fw, ssid: d.ssid, rssi: d.wifi_rssi, uptime: d.uptime,
+      sims: [1, 2].filter((slot) => lineOf(d.id, slot, all).enabled).map((slot) => {
+        const s = sims.find((x) => x.device_id === d.id && x.slot === slot);
+        return { label: simLabel(d.id, slot), operator: s?.operator, state: s?.state, dbm: dbmOf(s?.csq), mv: s?.mv };
+      }),
+    }));
+  const since = now - 86400_000;
+  const c = db.prepare(
+    `SELECT SUM(direction = 'in') received, SUM(direction = 'out' AND status = 'sent') sent,
+            SUM(direction = 'out' AND status = 'failed') failed FROM messages WHERE created_at > ?`
+  ).get(since);
+  return {
+    gateways, now,
+    counts: {
+      received: c.received || 0, sent: c.sent || 0, failed: c.failed || 0,
+      calls: db.prepare('SELECT COUNT(*) n FROM calls WHERE ts > ?').get(since).n,
+      pending: db.prepare("SELECT COUNT(*) n FROM messages WHERE direction = 'out' AND status IN ('queued', 'sending')").get().n,
+    },
+  };
+}
+
+function rememberChat(c) {
+  const id = String(c.id);
+  const name = c.title || [c.first_name, c.last_name].filter(Boolean).join(' ') || c.username || id;
+  const list = json('telegram_seen', []).filter((x) => x.id !== id);
+  list.unshift({ id, name, type: c.type, username: c.username || null });
+  setSetting('telegram_seen', JSON.stringify(list.slice(0, 30)));
+}
+
+async function handleUpdate(tok, u) {
+  const msg = u.message || u.channel_post;
+  const chat = (msg || u.my_chat_member)?.chat;
+  if (!chat) return;
+  rememberChat(chat);
+  const cmd = String(msg?.text || '').trim().split(/\s+/)[0].toLowerCase().replace(/@\w+$/, '');
+  if (!cmd.startsWith('/')) return;
+  if (msg.date && Date.now() / 1000 - msg.date > 600) return; // sent while the server was down: too old to answer
+  const id = String(chat.id);
+  const known = new Set(Object.values(routes()).flat());
+  // only chats the owner added to a SIM line get answers; others learn their chat ID
+  if (!known.has(id) && !(chat.username && known.has(`@${chat.username}`))) {
+    return send(tok, id, `This chat is not set up on the gateway. Its chat ID is <code>${id}</code>: add it in the panel under Settings → Telegram.`);
+  }
+  if (cmd === '/stats' || cmd === '/status') return send(tok, id, statsMessage(statsData(Date.now())));
+  return send(tok, id, HELP);
+}
+
+// Reads what people send to the bot (long polling: works without a public address or webhook).
+export function startTelegramPolling() {
+  if (polling) return;
+  polling = true;
+  (async () => {
+    let backoff = 0;
+    while (polling) {
+      const tok = token();
+      if (!tok) {
+        await sleep(2000);
+        continue;
+      }
+      const offset = Number(setting('telegram_offset', '0')) || 0;
+      const r = await callApi(tok, 'getUpdates',
+        { offset, timeout: POLL_S, allowed_updates: ['message', 'channel_post', 'my_chat_member'] }, (POLL_S + 10) * 1000);
+      if (tok !== token()) continue; // the token changed meanwhile
+      if (!r.ok) {
+        pollError = r.status === 409
+          ? 'Another program reads this bot (a webhook or a second server), so /stats and Find chats do not work here.'
+          : r.description;
+        backoff = Math.min(60_000, backoff ? backoff * 2 : 5_000);
+        await sleep(backoff);
+        continue;
+      }
+      pollError = null;
+      backoff = 0;
+      let next = offset;
+      for (const u of r.result || []) {
+        next = Math.max(next, u.update_id + 1);
+        try {
+          await handleUpdate(tok, u);
+        } catch (e) {
+          console.error('telegram update', e);
+        }
+      }
+      if (next !== offset) setSetting('telegram_offset', String(next));
+    }
+  })();
 }
 
 // ---------- delivery ----------
@@ -164,6 +331,10 @@ export function telegramView(lines) {
     calls: enabled('telegram_calls'),
     lines: lines.map((l) => ({ ...l, chats: r[`${l.device}:${l.slot}`] || [] })),
     waiting: db.prepare('SELECT COUNT(*) n FROM telegram_outbox').get().n,
+    alert_device: enabled('telegram_alert_device'),
+    alert_signal: enabled('telegram_alert_signal'),
+    alert_minutes: alertMinutes(),
+    problem: tok ? pollError : null,
   };
 }
 
@@ -192,13 +363,29 @@ export async function setTelegram(b) {
       if (!TOKEN_RE.test(t)) throw new HttpError(400, 'This does not look like a bot token. It looks like 123456789:AAE… and comes from @BotFather.');
       const me = await callApi(t, 'getMe');
       if (!me.ok) throw new HttpError(400, me.network ? me.description : `Telegram did not accept the token: ${me.description}`);
+      if (t !== token()) { // another bot: start reading its messages from the beginning
+        setSetting('telegram_offset', '0');
+        setSetting('telegram_seen', '[]');
+      }
       setSetting('telegram_token', t);
       setSetting('telegram_bot', JSON.stringify({ id: me.result.id, username: me.result.username, name: me.result.first_name }));
+      // the command menu in Telegram
+      await callApi(t, 'setMyCommands', { commands: [
+        { command: 'stats', description: 'Gateways, SIM cards, signal and the last 24 hours' },
+        { command: 'help', description: 'What this bot does' },
+      ] });
       log(`Telegram bot @${me.result.username} connected`);
     }
   }
   if (b.sms !== undefined) setSetting('telegram_sms', b.sms ? 'on' : 'off');
   if (b.calls !== undefined) setSetting('telegram_calls', b.calls ? 'on' : 'off');
+  if (b.alert_device !== undefined) setSetting('telegram_alert_device', b.alert_device ? 'on' : 'off');
+  if (b.alert_signal !== undefined) setSetting('telegram_alert_signal', b.alert_signal ? 'on' : 'off');
+  if (b.alert_minutes !== undefined) {
+    const m = Number(b.alert_minutes);
+    if (!Number.isInteger(m) || m < 0 || m > 120) throw new HttpError(400, 'Minutes go from 0 to 120');
+    setSetting('telegram_alert_minutes', m);
+  }
   if (b.routes !== undefined) setSetting('telegram_routes', JSON.stringify(cleanRoutes(b.routes)));
 }
 
@@ -208,21 +395,12 @@ function needToken() {
   return tok;
 }
 
-// Chats that wrote to the bot recently (Telegram keeps them for 24 hours), to find their IDs.
+// Chats that wrote to the bot, newest first (the reader of the bot's messages notes them), to find
+// their IDs.
 export async function recentChats() {
-  const r = await callApi(needToken(), 'getUpdates', { limit: 100, timeout: 0, allowed_updates: ['message', 'channel_post', 'my_chat_member'] });
-  if (!r.ok) {
-    if (r.status === 409) throw new HttpError(409, 'This bot is connected to another program (a webhook), so the server cannot read its chats. Find the chat ID another way.');
-    throw new HttpError(502, `Telegram: ${r.description}`);
-  }
-  const chats = new Map();
-  for (const u of r.result || []) {
-    const c = (u.message || u.channel_post || u.my_chat_member)?.chat;
-    if (!c) continue;
-    const name = c.title || [c.first_name, c.last_name].filter(Boolean).join(' ') || c.username || String(c.id);
-    chats.set(String(c.id), { id: String(c.id), name, type: c.type, username: c.username || null });
-  }
-  return { chats: [...chats.values()].reverse() };
+  needToken();
+  if (pollError) throw new HttpError(409, pollError);
+  return { chats: json('telegram_seen', []) };
 }
 
 export async function testChats(value, label = 'test') {

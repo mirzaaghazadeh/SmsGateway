@@ -7,7 +7,7 @@ import { analyzeText } from './shared/gsm.js';
 import { emit } from './webhook.js';
 import { updateOffer } from './firmware.js';
 import { ledForDevice } from './led.js';
-import { forwardSms, forwardCall } from './telegram.js';
+import { forwardSms, forwardCall, alertDevice, lineState, checkSignalAlerts } from './telegram.js';
 import { simConfig } from './lines.js';
 
 export const ONLINE_MS = 30_000;
@@ -96,6 +96,7 @@ export function handleSync(body, now = Date.now()) {
       if (dev.offline) {
         log(`Gateway back online after ${Math.round((now - dev.last_seen) / 60000)} min`, { device_id: id });
         emit('device.online', { device: id, name: dev.name });
+        toTelegram(() => alertDevice({ device: id, online: true, offlineFor: now - dev.last_seen, now }), id, null);
       }
     }
     db.prepare(
@@ -129,7 +130,9 @@ export function handleSync(body, now = Date.now()) {
         id, slot, state, str(s.sim, 30), str(s.imei, 20), str(s.iccid, 24), str(s.op, 40),
         signalCsq(s), int(s.reg), millivolts(s.mv), int(s.queue), now
       );
+      toTelegram(() => lineState({ device: id, slot, prev: prev?.state, state, operator: str(s.op, 40), csq: signalCsq(s), now }), id, slot);
     }
+    toTelegram(() => checkSignalAlerts(now), id, null);
 
     if (now - (lastSample.get(id) || 0) >= SAMPLE_EVERY_MS) {
       lastSample.set(id, now);
@@ -406,7 +409,9 @@ export function maintenance(now = Date.now()) {
       db.prepare('UPDATE devices SET offline = 1 WHERE id = ?').run(d.id);
       log(`Gateway offline (last seen ${new Date(d.last_seen).toISOString()})`, { level: 'warn', device_id: d.id });
       emit('device.offline', { device: d.id, name: d.name, last_seen: d.last_seen });
+      toTelegram(() => alertDevice({ device: d.id, online: false, lastSeen: d.last_seen, now }), d.id, null);
     }
+    toTelegram(() => checkSignalAlerts(now), null, null);
   });
 
   if (now - lastCleanup > 6 * 3600_000) {

@@ -1,6 +1,33 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { splitText, smsMessages, callMessage, parseChatIds, CHAT_RE, esc } from '../src/tgformat.js';
+import { splitText, smsMessages, callMessage, parseChatIds, CHAT_RE, esc, statsMessage, deviceAlert, signalAlert, duration } from '../src/tgformat.js';
+
+test('/stats text and alerts', () => {
+  const now = Date.UTC(2026, 10, 18, 12, 0);
+  const text = statsMessage({
+    now,
+    counts: { received: 8, sent: 3, failed: 1, calls: 4, pending: 2 },
+    gateways: [{
+      name: 'Home', online: false, lastSeen: now - 14 * 60_000, fw: '1.2.0', ssid: 'HomeWiFi', rssi: -57, uptime: 3 * 86400,
+      sims: [{ label: 'Work (SIM 1)', operator: 'Telecom One', state: 'ready', dbm: -79, mv: 4012 },
+        { label: 'SIM 2', state: 'no_answer' }],
+    }],
+  });
+  assert.equal(text, [
+    '📊 <b>SMS gateway status</b>', '',
+    '<b>Home</b> · 🔴 offline for 14 min · firmware 1.2.0',
+    'Wi-Fi HomeWiFi -57 dBm · up 3 d 0 h',
+    '• Work (SIM 1): Telecom One, ready, -79 dBm (good), 4.01 V',
+    '• SIM 2: the SIM800L is not answering', '',
+    '<b>Last 24 h</b>: 8 received · 3 sent · 1 failed · 4 missed calls · 2 waiting to send',
+  ].join('\n'));
+  assert.equal(deviceAlert({ name: 'Home', online: false, lastSeen: now - 120_000, now }),
+    '🔴 <b>Home</b> is offline\nNo check-in for 2 min. Check its power and Wi-Fi.');
+  assert.equal(deviceAlert({ name: 'Home', online: true, offlineFor: 75 * 60_000 }), '🟢 <b>Home</b> is back online\nIt was offline for 1 h 15 min.');
+  assert.equal(signalAlert({ label: 'SIM 2', gateway: 'Home', lost: true, state: 'no_sim', minutes: 3 }),
+    '📵 <b>SIM 2</b> has no network\nno SIM card, for 3 min · Home');
+  assert.equal(duration(90 * 3600_000), '3 d 18 h');
+});
 
 test('short text stays in one piece', () => {
   assert.deepEqual(splitText('Your code is 4321'), ['Your code is 4321']);

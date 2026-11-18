@@ -98,6 +98,14 @@ several chats.
 4. Press **Find chats**, click the box of a SIM line, then click a chat to add it. **Test** sends a
    test message to the chats of that line. **Save**.
 
+- **/stats**: send it to the bot and it answers with every gateway (online, Wi-Fi, firmware), each
+  SIM (operator, state, signal, voltage) and the last 24 hours. Only chats you added to a SIM line
+  get an answer; any other chat is told its chat ID, which makes it easy to add.
+- **Alerts** (switch each on or off): a gateway that stops checking in for 90 s and comes back
+  (to every chat of its SIMs), and a SIM that has had no network for a set number of minutes and
+  gets it back (to that SIM's chats). Short drops send nothing.
+- The server reads the bot's messages itself (long polling), so no webhook or public address is
+  needed. Do not use the same bot in another program at the same time.
 - A long SMS comes in as several parts. The server waits for all of them and sends one Telegram
   message with the whole text. If a part never arrives, the rest goes out after 30 minutes, marked
   with how many parts are missing.

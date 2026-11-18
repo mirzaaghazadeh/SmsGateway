@@ -4,7 +4,13 @@ This is the hand-wired build (v1 case). For the PCB build (v2), where the module
 board, see [pcb/README.md](pcb/README.md). Read [LESSONS.md](LESSONS.md) first: the mistakes from
 the first build, and how to avoid them.
 
-Picture: `case/v1/v1_layout_wiring.png` (top view, lid off; front = bottom of the picture).
+**Every wire, pin by pin:** [docs/wiring_v1.png](docs/wiring_v1.png) (redraw it with
+`docs/make_wiring.py`). Where the parts sit in the box: `case/v1/v1_layout_wiring.png` (top view,
+lid off; front = bottom of the picture).
+
+<p align="center">
+  <a href="docs/wiring_v1.png"><img src="docs/wiring_v1.png" alt="Complete wiring of the hand-wired build: ESP32 pin row, power, OLED, optional fixed 4.0 V, and both SIM800Ls with their resistors and capacitors" width="900"></a>
+</p>
 
 ## Where everything sits
 
