@@ -55,12 +55,15 @@ export default function signalPage(page) {
     ];
     const mv = on.map((s) => ({ key: `s${s}mv`, label: simName(s, device), color: `var(--sim${s})`, fmt: (v) => `${(v / 1000).toFixed(2)} V` }));
     const dbm = (v) => (v == null ? '–' : `${v} dBm`);
+    // the scale reaches up to -45 dBm; a very strong signal (Wi-Fi next to a phone hotspot) widens it
+    const strongest = Math.max(-45, ...r.points.flatMap((p) => sig.map((s) => p[s.key])).filter((v) => v != null));
+    const yMax = strongest > -45 ? Math.min(0, Math.ceil((strongest + 5) / 10) * 10) : -45;
     const minMv = Math.min(...r.points.flatMap((p) => on.map((s) => p[`s${s}mv`])).filter((v) => v));
     clear(body,
       panel('Signal strength', legend(sig),
         h('div', { class: 'panel-body' },
-          lineChart(r.points, sig, { ...common, yMin: -115, yMax: -45, yFmt: (v) => `${v}`, height: 260, label: 'Signal strength in dBm',
-            bands: [{ from: -73, to: -45 }, { from: -99, to: -85 }] }),
+          lineChart(r.points, sig, { ...common, yMin: -115, yMax, yFmt: (v) => `${v}`, height: 260, label: 'Signal strength in dBm',
+            bands: [{ from: -73, to: yMax }, { from: -99, to: -85 }] }),
           h('p', { class: 'hint', style: { marginTop: '10px' } },
             'Shaded: above -73 dBm is excellent, -85 to -99 is fair. Below -100 dBm SMS may fail; move the antennas or the box. ',
             `Now: ${[...on.map((s) => `${simName(s, device)} ${dbm(last[`s${s}`])}`), `Wi-Fi ${dbm(last.wifi)}`].join(', ')}.`)

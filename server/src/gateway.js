@@ -23,6 +23,13 @@ const int = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Math.
 // The gateway sends 0 when it has no reading (Wi-Fi not joined, SIM800L not answering): store nothing
 const rssi = (v) => { const n = int(v); return n != null && n < 0 && n > -127 ? n : null; };
 const millivolts = (v) => { const n = int(v); return n != null && n > 0 ? n : null; };
+// CSQ 0..31; 99 = unknown. A SIM800L that has just started says 0 before it finds the network: that is
+// "no reading yet", not -113 dBm, unless it is registered.
+const signalCsq = (s) => {
+  const c = int(s?.csq);
+  if (c == null || c < 0 || c > 31) return null;
+  return c === 0 && ![1, 5].includes(int(s.reg)) ? null : c;
+};
 
 export function callMode() {
   return setting('call_mode', 'reject');
@@ -120,7 +127,7 @@ export function handleSync(body, now = Date.now()) {
            mv = excluded.mv, queue = excluded.queue, updated_at = excluded.updated_at`
       ).run(
         id, slot, state, str(s.sim, 30), str(s.imei, 20), str(s.iccid, 24), str(s.op, 40),
-        int(s.csq), int(s.reg), millivolts(s.mv), int(s.queue), now
+        signalCsq(s), int(s.reg), millivolts(s.mv), int(s.queue), now
       );
     }
 
@@ -132,7 +139,7 @@ export function handleSync(body, now = Date.now()) {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id, now, rssi(wifi.rssi), int(body.heap),
-        int(by[1]?.csq), int(by[1]?.reg), millivolts(by[1]?.mv), int(by[2]?.csq), int(by[2]?.reg), millivolts(by[2]?.mv)
+        signalCsq(by[1]), int(by[1]?.reg), millivolts(by[1]?.mv), signalCsq(by[2]), int(by[2]?.reg), millivolts(by[2]?.mv)
       );
     }
 

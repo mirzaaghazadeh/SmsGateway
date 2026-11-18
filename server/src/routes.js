@@ -157,7 +157,8 @@ router.get('/api/signals', panel((req) => {
     .prepare(
       // 0 meant "no reading" in samples stored by older servers: leave those out of the averages
       `SELECT (ts / ?) * ? AS t, AVG(CASE WHEN wifi_rssi < 0 THEN wifi_rssi END) wifi,
-              AVG(NULLIF(s1_csq, 99)) s1, AVG(NULLIF(s2_csq, 99)) s2,
+              AVG(CASE WHEN s1_csq BETWEEN 1 AND 31 THEN s1_csq END) s1,
+              AVG(CASE WHEN s2_csq BETWEEN 1 AND 31 THEN s2_csq END) s2,
               AVG(NULLIF(s1_mv, 0)) s1mv, AVG(NULLIF(s2_mv, 0)) s2mv, MIN(heap) heap
        FROM samples WHERE device_id = ? AND ts > ? GROUP BY t ORDER BY t`
     )

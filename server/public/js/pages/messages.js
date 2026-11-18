@@ -1,5 +1,5 @@
 import { h, clear, icon, api, poll, toast, busy, segmented, emptyState, plural, simTag, simOn } from '../ui.js';
-import { analyzeText, MAX_PARTS } from '/js/gsm.js';
+import { analyzeText, MAX_PARTS } from '../gsm.js';
 import { messageRow } from './parts.js';
 
 const FILTERS = [

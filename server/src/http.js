@@ -85,8 +85,9 @@ const MIME = {
   '.woff2': 'font/woff2',
 };
 
-// Serve a file from `root`; returns false if it does not exist.
-export async function serveStatic(req, res, root, pathname) {
+// Serve a file from `root`; returns false if it does not exist. `immutable`: the URL carries the
+// version of the files (/v/<version>/...), so it may be kept for good.
+export async function serveStatic(req, res, root, pathname, { immutable = false } = {}) {
   const rel = normalize(decodeURIComponent(pathname)).replace(/^([/\\])+/, '');
   const file = join(root, rel);
   if (!file.startsWith(root + sep) && file !== root) return false;
@@ -101,8 +102,8 @@ export async function serveStatic(req, res, root, pathname) {
   const headers = {
     'Content-Type': MIME[extname(file)] || 'application/octet-stream',
     ETag: etag,
-    // fonts never change; everything else is revalidated with the ETag so a redeploy shows at once
-    'Cache-Control': extname(file) === '.woff2' ? 'public, max-age=31536000, immutable' : 'no-cache',
+    // fonts and versioned URLs never change; the rest is revalidated with the ETag
+    'Cache-Control': immutable || extname(file) === '.woff2' ? 'public, max-age=31536000, immutable' : 'no-cache',
   };
   if (req.headers['if-none-match'] === etag) {
     res.writeHead(304, headers);

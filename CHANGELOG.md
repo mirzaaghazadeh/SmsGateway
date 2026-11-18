@@ -4,6 +4,15 @@ Versions are the gateway firmware versions (`FW_VERSION` in `firmware/sms_gatewa
 is a GitHub release tagged `vX.Y.Z` with the firmware files. Server changes ship with the version they
 were made for; the server deploys from `main`.
 
+## Unreleased
+
+- Server: after a deploy the panel shows the new version at once. Its scripts and styles now load
+  from a versioned path; before, Cloudflare kept them for up to 4 hours, so the browser ran the old
+  panel code.
+- Signal page: a very strong Wi-Fi signal (a phone hotspot next to the gateway) widens the scale
+  instead of running off the chart, and the signal of 0 a SIM800L reports while it starts is no
+  longer drawn as -113 dBm.
+
 ## 1.2.0
 
 - Telegram: add a bot under Settings → Telegram and choose, for each SIM, the chats that get its

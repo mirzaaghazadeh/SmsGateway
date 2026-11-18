@@ -328,8 +328,19 @@ test('settings and static panel', async () => {
   assert.equal(r.body.config.calls, 'ignore');
   const html = await fetch(BASE + '/messages');
   assert.equal(html.status, 200);
-  assert.match(await html.text(), /<html/);
+  assert.equal(html.headers.get('cache-control'), 'no-cache');
+  const page = await html.text();
+  assert.match(page, /<html/);
   assert.equal((await fetch(BASE + '/js/gsm.js')).status, 200);
+  // scripts and styles come from a versioned path, so a deploy is never mixed with cached files
+  const app = /src="(\/v\/[0-9a-f]+)\/js\/app\.js"/.exec(page);
+  assert.ok(app, 'versioned app.js');
+  assert.match(page, new RegExp(`href="${app[1]}/app.css"`));
+  for (const p of ['/js/app.js', '/js/gsm.js', '/js/pages/messages.js', '/app.css']) {
+    const r = await fetch(BASE + app[1] + p);
+    assert.equal(r.status, 200, p);
+  }
+  assert.equal((await fetch(BASE + app[1] + '/js/nope.js')).status, 404);
 });
 
 test('Telegram: each SIM line goes to its own chats, a long SMS arrives joined', async () => {
