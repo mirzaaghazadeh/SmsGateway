@@ -9,9 +9,9 @@ struct SmsPart {
 };
 
 struct Job {
-  enum Type : uint8_t { SMS, AT } type = SMS;
+  enum Type : uint8_t { SMS, AT, USSD } type = SMS;
   uint32_t id = 0;
-  String cmd;                  // AT
+  String cmd;                  // AT: the command; USSD: the code, like *123#
   std::vector<SmsPart> parts;  // SMS
 };
 
@@ -44,7 +44,7 @@ class Modem {
  private:
   enum class St : uint8_t { RESET, BOOT_WAIT, PROBE, INIT, SIM_WAIT, NET_INIT, IDLE, DEAD, OFF };
   enum class Res : uint8_t { NONE, OK, ERR, TIMEOUT, PROMPT };
-  enum Tag : uint8_t { T_PROBE, T_INIT, T_CPIN, T_NET, T_CSQ, T_CREG, T_COPS, T_CBC, T_CMGL, T_CMGD, T_CMGS, T_CMGS_BODY, T_AT_USER, T_ATH, T_COPS_SET };
+  enum Tag : uint8_t { T_PROBE, T_INIT, T_CPIN, T_NET, T_CSQ, T_CREG, T_COPS, T_CBC, T_CMGL, T_CMGD, T_CMGS, T_CMGS_BODY, T_AT_USER, T_ATH, T_COPS_SET, T_CUSD, T_CUSD_END };
 
   void readPort();
   void handleLine(const String &l);
@@ -55,6 +55,9 @@ class Modem {
   void startJob();
   void sendPart();
   void finishJob(bool ok, const String &info);
+  void failControlJob(const String &why);  // an AT or USSD job that cannot run
+  void ussdLine(const String &l);
+  void finishUssd(bool ok, const String &info);
   void parseList(const String &resp);
   bool inFlight(int idx, uint32_t now);
   void ringing();
@@ -96,6 +99,14 @@ class Modem {
   bool jobActive_ = false;
   size_t part_ = 0;
   String refs_;
+
+  // USSD (firmware 1.3.0): the answer comes as "+CUSD: ..." after the OK, maybe over several lines
+  String ussd_;               // the answer so far
+  bool ussdOpen_ = false;     // its text goes on in the next line
+  bool ussdGot_ = false;      // the whole answer is here
+  bool ussdWait_ = false;     // OK came, waiting for the answer
+  bool ussdCancel_ = false;   // the network waits for a menu choice: end the session
+  uint32_t ussdUntil_ = 0;
 
   bool call_ = false, hangSent_ = false;
   String callNum_;

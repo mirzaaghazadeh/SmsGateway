@@ -3,8 +3,10 @@
 // them, so a restart or a Telegram outage does not lose them.
 import { db, setting, setSetting, log } from './db.js';
 import { HttpError } from './http.js';
-import { smsMessages, callMessage, parseChatIds, CHAT_RE, statsMessage, deviceAlert, signalAlert } from './tgformat.js';
+import { smsMessages, callMessage, parseChatIds, CHAT_RE, statsMessage, deviceAlert, signalAlert, esc, parseList, skipReason } from './tgformat.js';
 import { simLabel, allLines, lineOf } from './lines.js';
+import { createOutgoing, createJob } from './gateway.js';
+import { oneLine } from './ussd.js';
 
 const API = (process.env.TELEGRAM_API || 'https://api.telegram.org').replace(/\/+$/, '');
 const TOKEN_RE = /^\d{5,15}:[A-Za-z0-9_-]{30,60}$/;
@@ -57,6 +59,14 @@ function lineLabel(device, slot) {
 
 const chatsFor = (device, slot) => routes()[`${device}:${slot}`] || [];
 
+// filters: per line "all" or "codes" (only SMS with a one-time code); senders and words to skip
+const modes = () => json('telegram_modes', {});
+const filterFor = (device, slot) => ({
+  mode: modes()[`${device}:${slot}`] || 'all',
+  senders: parseList(setting('telegram_skip_senders', '')),
+  words: parseList(setting('telegram_skip_words', '')),
+});
+
 function gatewayName(device) {
   const k = db.prepare('SELECT k.name kname, d.name dname FROM devices d LEFT JOIN device_keys k ON k.device_id = d.id WHERE d.id = ?').get(device);
   return k?.kname || k?.dname || 'SMS Gateway';
@@ -73,24 +83,43 @@ const dbmOf = (csq) => (csq == null || csq === 99 || csq < 0 ? null : -113 + 2 *
 
 // ---------- forwarding (called by gateway.js inside its transaction) ----------
 
-function enqueue(chats, texts, now) {
-  const add = db.prepare('INSERT INTO telegram_outbox (chat_id, text, next_at, created_at) VALUES (?, ?, ?, ?)');
-  for (const chat of chats) for (const t of texts) add.run(chat, t, now, now);
+// ref: the SMS a notice is about ({device, slot, number}), so a reply to it in Telegram goes back
+function enqueue(chats, texts, now, ref = null) {
+  const add = db.prepare('INSERT INTO telegram_outbox (chat_id, text, next_at, created_at, ref) VALUES (?, ?, ?, ?, ?)');
+  for (const chat of chats) for (const t of texts) add.run(chat, t, now, now, ref ? JSON.stringify(ref) : null);
   setImmediate(() => telegramTick().catch(() => {}));
 }
 
 export function forwardSms({ device, slot, from, text, parts, note, smsTime, now = Date.now() }) {
   if (!token() || !enabled('telegram_sms') || !slot) return;
   const chats = chatsFor(device, slot);
-  if (!chats.length) return;
+  if (!chats.length || skipReason({ from, text, ...filterFor(device, slot) })) return;
   const tz = setting('fw_tz', 'UTC');
-  enqueue(chats, smsMessages({ from, text, line: lineLabel(device, slot), parts, note, smsTime, receivedAt: now, tz }), now);
+  enqueue(chats, smsMessages({ from, text, line: lineLabel(device, slot), parts, note, smsTime, receivedAt: now, tz }), now,
+    { device, slot, number: from });
+}
+
+// An SMS sent from Telegram (a reply or /send) went out or failed: tell the chat that asked.
+export function notifyOutgoing(msg, ok, error = '') {
+  if (!msg?.tg_chat || !token()) return;
+  enqueue([msg.tg_chat], [ok ? `✅ SMS sent to <b>${esc(msg.number)}</b>` : `❌ SMS to <b>${esc(msg.number)}</b> not sent: ${esc(error)}`], Date.now());
+}
+
+// The answer to a balance check: to the chat that asked (/balance), or, for an automatic check, to
+// every chat of the line.
+export function notifyBalance({ device, slot, ok, text, chat = null, now = Date.now() }) {
+  if (!token()) return;
+  const chats = chat ? [chat] : chatsFor(device, slot);
+  const label = `${esc(simLabel(device, slot))} · ${esc(gatewayName(device))}`;
+  const body = ok ? `💰 <b>Balance</b> · ${label}\n${esc(text)}` : `❌ <b>Balance check failed</b> · ${label}\n${esc(text)}`;
+  if (chats.length) enqueue(chats, [body], now);
 }
 
 export function forwardCall({ device, slot, number, now = Date.now() }) {
   if (!token() || !enabled('telegram_calls') || !slot) return;
   const chats = chatsFor(device, slot);
-  if (chats.length) enqueue(chats, [callMessage({ number, line: lineLabel(device, slot) })], now);
+  if (!chats.length || skipReason({ from: number, senders: filterFor(device, slot).senders })) return;
+  enqueue(chats, [callMessage({ number, line: lineLabel(device, slot) })], now);
 }
 
 // ---------- alerts ----------
@@ -146,7 +175,12 @@ function signalNotice(device, slot, info, now) {
 
 const POLL_S = Number(process.env.TELEGRAM_POLL_SECONDS || 25);
 const HELP = 'This bot sends the SMS and missed calls of your SMS gateway here.\n\n'
-  + '/stats: the gateways, their SIM cards, signal and the last 24 hours';
+  + '/stats: the gateways, their SIM cards, signal and the last 24 hours\n'
+  + '/balance: the balance of the SIM cards that send their messages here\n'
+  + '/send +15551234567 text: send an SMS (/send 2 +15551234567 text: from SIM 2)\n'
+  + 'Reply to a forwarded SMS: your reply goes to the sender, from the same SIM.';
+const SEND_USAGE = 'Send like this: <code>/send +15551234567 Your text</code>\n'
+  + 'From SIM 2: <code>/send 2 +15551234567 Your text</code>';
 let polling = false;
 let pollError = null;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -162,7 +196,10 @@ function statsData(now) {
       fw: d.fw, ssid: d.ssid, rssi: d.wifi_rssi, uptime: d.uptime,
       sims: [1, 2].filter((slot) => lineOf(d.id, slot, all).enabled).map((slot) => {
         const s = sims.find((x) => x.device_id === d.id && x.slot === slot);
-        return { label: simLabel(d.id, slot), operator: s?.operator, state: s?.state, dbm: dbmOf(s?.csq), mv: s?.mv };
+        return {
+          label: simLabel(d.id, slot), operator: s?.operator, state: s?.state, dbm: dbmOf(s?.csq), mv: s?.mv,
+          balance: s?.balance ? oneLine(s.balance, 120) : null, balanceAt: s?.balance_at,
+        };
       }),
     }));
   const since = now - 86400_000;
@@ -193,8 +230,10 @@ async function handleUpdate(tok, u) {
   const chat = (msg || u.my_chat_member)?.chat;
   if (!chat) return;
   rememberChat(chat);
-  const cmd = String(msg?.text || '').trim().split(/\s+/)[0].toLowerCase().replace(/@\w+$/, '');
-  if (!cmd.startsWith('/')) return;
+  const text = String(msg?.text || '').trim();
+  const cmd = text.split(/\s+/)[0].toLowerCase().replace(/@\w+$/, '');
+  const isCmd = cmd.startsWith('/');
+  if (!text || (!isCmd && !msg.reply_to_message)) return;
   if (msg.date && Date.now() / 1000 - msg.date > 600) return; // sent while the server was down: too old to answer
   const id = String(chat.id);
   const known = new Set(Object.values(routes()).flat());
@@ -202,8 +241,63 @@ async function handleUpdate(tok, u) {
   if (!known.has(id) && !(chat.username && known.has(`@${chat.username}`))) {
     return send(tok, id, `This chat is not set up on the gateway. Its chat ID is <code>${id}</code>: add it in the panel under Settings → Telegram.`);
   }
+  if (!isCmd) { // a reply: to the sender of the SMS it answers, from the same SIM
+    const ref = db.prepare('SELECT * FROM telegram_sent WHERE chat_id = ? AND message_id = ?').get(id, msg.reply_to_message.message_id);
+    if (!ref) return send(tok, id, `Reply to a forwarded SMS to answer it.\n${SEND_USAGE}`);
+    return queueSms(tok, id, { to: ref.number, text, sim: ref.slot, device: ref.device_id });
+  }
   if (cmd === '/stats' || cmd === '/status') return send(tok, id, statsMessage(statsData(Date.now())));
+  if (cmd === '/balance') return checkBalances(tok, id, chat);
+  if (cmd === '/send') {
+    const m = /^\/send(?:@\w+)?\s+(?:([12])\s+)?(\+?\d[\d-]{4,19})\s+([\s\S]+)$/i.exec(text);
+    if (!m) return send(tok, id, SEND_USAGE);
+    return queueSms(tok, id, { to: m[2], text: m[3].trim(), sim: m[1] ? Number(m[1]) : 0 });
+  }
   return send(tok, id, HELP);
+}
+
+// /balance: the balance code of every line this chat gets messages from; the answers come one by
+// one (notifyBalance), as each SIM hears back from its network.
+function checkBalances(tok, id, chat) {
+  const all = allLines();
+  const mine = Object.entries(routes())
+    .filter(([, chats]) => chats.includes(id) || (chat.username && chats.includes(`@${chat.username}`)))
+    .map(([key]) => key.split(':'))
+    .filter(([device, slot]) => lineOf(device, Number(slot), all).enabled);
+  const asked = [];
+  const problems = [];
+  for (const [device, s] of mine) {
+    const slot = Number(s);
+    const line = lineOf(device, slot, all);
+    const label = esc(simLabel(device, slot));
+    if (!line.ussd) {
+      problems.push(`${label}: no balance code set (Devices → SIM cards in the panel)`);
+      continue;
+    }
+    try {
+      createJob(device, { type: 'ussd', slot, tg: id });
+      asked.push(label);
+    } catch (e) {
+      problems.push(`${label}: ${esc(e.message)}`);
+    }
+  }
+  const lines = [];
+  if (asked.length) lines.push(`⏳ Checking the balance of ${asked.join(', ')}…`);
+  lines.push(...problems);
+  return send(tok, id, lines.join('\n') || 'No SIM card sends its messages to this chat.');
+}
+
+// Queue an SMS asked for in Telegram; the chat hears when it is sent or failed (notifyOutgoing).
+function queueSms(tok, chat, { to, text, sim = 0, device = null }) {
+  if (!enabled('telegram_send')) return send(tok, chat, 'Sending SMS from Telegram is turned off in the panel (Settings → Telegram).');
+  try {
+    const m = createOutgoing({ to, text, sim, source: 'telegram', tgChat: chat, device });
+    const from = sim ? ` from ${esc(device ? simLabel(device, sim) : `SIM ${sim}`)}` : '';
+    return send(tok, chat, `📤 Sending to <b>${esc(m.number)}</b>${from}…`);
+  } catch (e) {
+    const why = /phone number/i.test(e.message) ? `${esc(to)} cannot get an SMS (not a phone number)` : esc(e.message);
+    return send(tok, chat, `❌ Not sent: ${why}`);
+  }
 }
 
 // Reads what people send to the bot (long polling: works without a public address or webhook).
@@ -271,6 +365,7 @@ export async function telegramTick() {
         return;
       }
       db.prepare('DELETE FROM telegram_outbox WHERE created_at < ?').run(now - KEEP_MS);
+      db.prepare('DELETE FROM telegram_sent WHERE created_at < ?').run(now - 30 * 86400_000);
       const heads = db
         .prepare(
           `SELECT o.* FROM telegram_outbox o
@@ -289,7 +384,14 @@ export async function telegramTick() {
 async function deliver(tok, row) {
   const r = await send(tok, row.chat_id, row.text);
   const now = Date.now();
-  if (r.ok) return db.prepare('DELETE FROM telegram_outbox WHERE id = ?').run(row.id);
+  if (r.ok) {
+    if (row.ref && r.result?.message_id) { // remember it, so a reply to this message answers the SMS
+      const ref = JSON.parse(row.ref);
+      db.prepare('INSERT OR REPLACE INTO telegram_sent (chat_id, message_id, device_id, slot, number, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(row.chat_id, r.result.message_id, ref.device, ref.slot, ref.number, now);
+    }
+    return db.prepare('DELETE FROM telegram_outbox WHERE id = ?').run(row.id);
+  }
 
   const p = r.parameters || {};
   if (p.migrate_to_chat_id) { // a group became a supergroup: it has a new ID
@@ -315,6 +417,7 @@ function moveChat(from, to) {
   for (const k of Object.keys(all)) all[k] = [...new Set(all[k].map((c) => (c === from ? to : c)))];
   setSetting('telegram_routes', JSON.stringify(all));
   db.prepare('UPDATE telegram_outbox SET chat_id = ? WHERE chat_id = ?').run(to, from);
+  db.prepare('DELETE FROM telegram_sent WHERE chat_id = ?').run(from); // message IDs start again in the new group
   log(`Telegram: group ${from} became supergroup ${to}; the chat ID was updated`);
 }
 
@@ -329,7 +432,10 @@ export function telegramView(lines) {
     bot: json('telegram_bot', null),
     sms: enabled('telegram_sms'),
     calls: enabled('telegram_calls'),
-    lines: lines.map((l) => ({ ...l, chats: r[`${l.device}:${l.slot}`] || [] })),
+    send: enabled('telegram_send'),
+    lines: lines.map((l) => ({ ...l, chats: r[`${l.device}:${l.slot}`] || [], mode: modes()[`${l.device}:${l.slot}`] || 'all' })),
+    skip_senders: setting('telegram_skip_senders', ''),
+    skip_words: setting('telegram_skip_words', ''),
     waiting: db.prepare('SELECT COUNT(*) n FROM telegram_outbox').get().n,
     alert_device: enabled('telegram_alert_device'),
     alert_signal: enabled('telegram_alert_signal'),
@@ -372,6 +478,8 @@ export async function setTelegram(b) {
       // the command menu in Telegram
       await callApi(t, 'setMyCommands', { commands: [
         { command: 'stats', description: 'Gateways, SIM cards, signal and the last 24 hours' },
+        { command: 'balance', description: 'Balance of the SIM cards' },
+        { command: 'send', description: 'Send an SMS: /send +number text' },
         { command: 'help', description: 'What this bot does' },
       ] });
       log(`Telegram bot @${me.result.username} connected`);
@@ -379,6 +487,7 @@ export async function setTelegram(b) {
   }
   if (b.sms !== undefined) setSetting('telegram_sms', b.sms ? 'on' : 'off');
   if (b.calls !== undefined) setSetting('telegram_calls', b.calls ? 'on' : 'off');
+  if (b.send !== undefined) setSetting('telegram_send', b.send ? 'on' : 'off');
   if (b.alert_device !== undefined) setSetting('telegram_alert_device', b.alert_device ? 'on' : 'off');
   if (b.alert_signal !== undefined) setSetting('telegram_alert_signal', b.alert_signal ? 'on' : 'off');
   if (b.alert_minutes !== undefined) {
@@ -387,6 +496,22 @@ export async function setTelegram(b) {
     setSetting('telegram_alert_minutes', m);
   }
   if (b.routes !== undefined) setSetting('telegram_routes', JSON.stringify(cleanRoutes(b.routes)));
+  if (b.modes !== undefined) {
+    if (!b.modes || typeof b.modes !== 'object' || Array.isArray(b.modes)) throw new HttpError(400, 'modes must be an object');
+    const out = {};
+    for (const [line, mode] of Object.entries(b.modes)) {
+      if (!LINE_RE.test(line)) throw new HttpError(400, `Unknown line ${line}`);
+      if (mode !== 'all' && mode !== 'codes') throw new HttpError(400, 'A line forwards "all" SMS or only "codes"');
+      if (mode === 'codes') out[line] = mode;
+    }
+    setSetting('telegram_modes', JSON.stringify(out));
+  }
+  for (const k of ['skip_senders', 'skip_words']) {
+    if (b[k] === undefined) continue;
+    const v = parseList(b[k]).join(', ');
+    if (v.length > 2000) throw new HttpError(400, 'The list is too long');
+    setSetting(`telegram_${k}`, v);
+  }
 }
 
 function needToken() {

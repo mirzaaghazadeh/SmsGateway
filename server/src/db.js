@@ -96,6 +96,12 @@ CREATE TABLE IF NOT EXISTS telegram_outbox (
   id INTEGER PRIMARY KEY, chat_id TEXT NOT NULL, text TEXT NOT NULL,
   attempts INTEGER NOT NULL DEFAULT 0, next_at INTEGER NOT NULL, created_at INTEGER NOT NULL
 );
+
+-- Which Telegram message carried which SMS, so a reply in Telegram goes back to the sender (30 days).
+CREATE TABLE IF NOT EXISTS telegram_sent (
+  chat_id TEXT NOT NULL, message_id INTEGER NOT NULL, device_id TEXT, slot INTEGER, number TEXT,
+  created_at INTEGER NOT NULL, PRIMARY KEY (chat_id, message_id)
+);
 `);
 
 // Columns added after the first release: add them to databases made by older versions.
@@ -109,6 +115,14 @@ addColumns('devices', [
   ['fw_offered_at', 'INTEGER'],
   ['fw_result', 'TEXT'],                           // what the last update attempt said
 ]);
+addColumns('messages', [['tg_chat', 'TEXT']]);    // outgoing SMS sent from Telegram: tell this chat how it went
+addColumns('sims', [
+  ['balance', 'TEXT'],          // the last answer to the balance code (USSD)
+  ['balance_at', 'INTEGER'],
+  ['balance_try', 'INTEGER'],   // last automatic check, so a failing one is not repeated every minute
+  ['keep_at', 'INTEGER'],       // last keep-alive SMS
+]);
+addColumns('telegram_outbox', [['ref', 'TEXT']]); // forwarded SMS: {device, slot, number}, for replies
 
 const getSetting = db.prepare('SELECT value FROM settings WHERE key = ?');
 const putSetting = db.prepare(

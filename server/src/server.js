@@ -75,7 +75,8 @@ const server = createServer(async (req, res) => {
       return sendJson(res, res.statusCode || 200, result ?? { ok: true });
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Method not allowed');
-    if (path === '/js/gsm.js' && (await serveStatic(req, res, SHARED, 'gsm.js', { immutable }))) return;
+    const shared = /^\/js\/([a-z]+\.js)$/.exec(path); // src/shared/*.js is used by the panel too
+    if (shared && (await serveStatic(req, res, SHARED, shared[1], { immutable }))) return;
     if (path !== '/' && path !== '/index.html' && (await serveStatic(req, res, PUBLIC, path, { immutable }))) return;
     if (!INDEX || versioned) throw new HttpError(404, 'Not found');
     // single page app: every other path gets the page, with the versioned file links

@@ -68,6 +68,7 @@ const ICONS = {
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   sim: '<path d="M6 3h9l4 4v14H6z"/><path d="M9 11h6v6H9zM12 11v6"/>',
   inbox: '<path d="M4 13l2.5-8h11L20 13v6H4z"/><path d="M4 13h4.5l1 2h5l1-2H20"/>',
+  download: '<path d="M12 4v11M7.5 10.5L12 15l4.5-4.5"/><path d="M5 19h14"/>',
 };
 
 export function icon(name, cls = '') {
@@ -149,7 +150,20 @@ export const REG = { 0: 'Not searching', 1: 'Home network', 2: 'Searching', 3: '
 
 // SIM lines ("<device>:<slot>" -> { name, enabled, network }), refreshed with the sidebar status.
 let LINES = {};
-export const setLines = (lines) => (LINES = lines || {});
+let GATEWAYS = {}; // device id -> name
+export function setLines(lines, gateways) {
+  LINES = lines || {};
+  if (gateways) GATEWAYS = Object.fromEntries(gateways.filter((g) => g.id).map((g) => [g.id, g.name]));
+}
+// Every SIM line that is on, for filters: [{ device, slot, label }]
+export function lineList() {
+  const list = Object.entries(LINES).filter(([, l]) => l.enabled !== false).map(([k]) => {
+    const [device, slot] = k.split(':');
+    return { device, slot: Number(slot) };
+  });
+  const many = new Set(list.map((l) => l.device)).size > 1;
+  return list.map((l) => ({ ...l, label: many ? `${GATEWAYS[l.device] || 'Gateway'} · ${simTag(l.slot, l.device)}` : simTag(l.slot, l.device) }));
+}
 function lineOf(slot, device) {
   if (device && LINES[`${device}:${slot}`]) return LINES[`${device}:${slot}`];
   return Object.entries(LINES).find(([k]) => k.endsWith(`:${slot}`))?.[1] || null;

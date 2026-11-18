@@ -1,5 +1,5 @@
 import { h, clear, icon, api, poll, busy, emptyState, timeEl, fullTime, simName } from '../ui.js';
-import { callText } from './parts.js';
+import { callText, filterBar } from './parts.js';
 
 export default function calls(page) {
   let items = [];
@@ -14,7 +14,9 @@ export default function calls(page) {
     t = setTimeout(() => ((q = search.value.trim()), load()), 250);
   });
 
-  const url = (before) => `/api/calls?${new URLSearchParams({ limit: '50', ...(q ? { q } : {}), ...(before ? { before } : {}) })}`;
+  const own = () => (q ? { q } : {});
+  const bar = filterBar({ csv: '/api/calls.csv', query: own, onChange: () => load() });
+  const url = (before) => `/api/calls?${new URLSearchParams({ limit: '50', ...own(), ...bar.params(), ...(before ? { before } : {}) })}`;
 
   async function load() {
     const r = await api(url());
@@ -26,8 +28,8 @@ export default function calls(page) {
 
   function draw() {
     if (!items.length) {
-      clear(list, emptyState('calls', q ? 'No calls from that number' : 'No missed calls yet',
-        q ? null : 'Call one of the SIM numbers: the gateway logs the caller and hangs up (change this in Settings).'));
+      clear(list, emptyState('calls', q ? 'No calls from that number' : bar.active() ? 'No calls on those days or that SIM' : 'No missed calls yet',
+        q || bar.active() ? null : 'Call one of the SIM numbers: the gateway logs the caller and hangs up (change this in Settings).'));
       return;
     }
     clear(list,
@@ -60,7 +62,7 @@ export default function calls(page) {
     h('header', { class: 'page-head' },
       h('div', {}, h('h1', {}, 'Missed calls'), h('p', { class: 'sub' }, 'Every call to the SIM cards, with the caller number.'))
     ),
-    h('section', { class: 'panel' }, h('div', { class: 'toolbar' }, h('label', { class: 'search' }, icon('search'), search)), list)
+    h('section', { class: 'panel' }, h('div', { class: 'toolbar' }, h('label', { class: 'search' }, icon('search'), search)), bar.el, list)
   );
   return poll(() => (extra ? null : load()), 10000);
 }

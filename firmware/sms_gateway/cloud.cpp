@@ -94,7 +94,7 @@ static void handleJob(JsonObject j) {
   const char *type = j["type"] | "";
   Modem *m = modemFor(j["slot"] | 0);
 
-  if (!strcmp(type, "sms") || !strcmp(type, "at")) {
+  if (!strcmp(type, "sms") || !strcmp(type, "at") || !strcmp(type, "ussd")) {
     if (!m) {
       evJob(id, false, "no such SIM");
       return;
@@ -104,6 +104,9 @@ static void handleJob(JsonObject j) {
     if (!strcmp(type, "at")) {
       job.type = Job::AT;
       job.cmd = (const char *)(j["cmd"] | "");
+    } else if (!strcmp(type, "ussd")) {  // firmware 1.3.0: balance check and other USSD codes
+      job.type = Job::USSD;
+      job.cmd = (const char *)(j["code"] | "");
     } else {
       job.type = Job::SMS;
       for (JsonObject p : j["parts"].as<JsonArray>()) {

@@ -72,33 +72,125 @@ function gatewayList(now = Date.now()) {
 
 const devicesWithSims = (now = Date.now()) => gatewayList(now).filter((g) => g.connected);
 
-function listMessages(q, { asc = false } = {}) {
+// A time in a query: milliseconds since 1970, or a date like 2026-11-18T09:00:00Z.
+function timeParam(v) {
+  if (v == null || v === '') return null;
+  const t = /^\d+$/.test(String(v)) ? Number(v) : Date.parse(String(v));
+  if (!Number.isFinite(t)) throw new HttpError(400, `"${v}" is not a time`);
+  return t;
+}
+
+// Filters the lists and the CSV export share: device, sim, since / until (a time range), q (search),
+// before / since_id (paging by id).
+function filters(q, { time, search }) {
   const where = [];
   const args = [];
-  if (q.direction === 'in' || q.direction === 'out') where.push('direction = ?'), args.push(q.direction);
-  if (q.status) where.push('status = ?'), args.push(String(q.status));
+  if (q.device) where.push('device_id = ?'), args.push(String(q.device));
   if (q.sim) where.push('slot = ?'), args.push(Number(q.sim));
-  if (q.q) where.push('(number LIKE ? OR text LIKE ?)'), args.push(`%${q.q}%`, `%${q.q}%`);
+  const since = timeParam(q.since);
+  const until = timeParam(q.until);
+  if (since != null) where.push(`${time} >= ?`), args.push(since);
+  if (until != null) where.push(`${time} < ?`), args.push(until);
+  if (q.q) where.push(`(${search.map((c) => `${c} LIKE ?`).join(' OR ')})`), args.push(...search.map(() => `%${q.q}%`));
   if (q.before) where.push('id < ?'), args.push(Number(q.before));
   if (q.since_id) where.push('id > ?'), args.push(Number(q.since_id));
+  return { where, args };
+}
+
+const whereSql = (where) => (where.length ? 'WHERE ' + where.join(' AND ') : '');
+
+function messageFilters(q) {
+  const f = filters(q, { time: 'created_at', search: ['number', 'text'] });
+  if (q.direction === 'in' || q.direction === 'out') f.where.push('direction = ?'), f.args.push(q.direction);
+  if (q.status) f.where.push('status = ?'), f.args.push(String(q.status));
+  return f;
+}
+
+function listMessages(q, { asc = false } = {}) {
+  const { where, args } = messageFilters(q);
   const limit = intParam(q.limit, 50, 1, 200);
   const rows = db
-    .prepare(`SELECT * FROM messages ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id ${asc ? 'ASC' : 'DESC'} LIMIT ?`)
+    .prepare(`SELECT * FROM messages ${whereSql(where)} ORDER BY id ${asc ? 'ASC' : 'DESC'} LIMIT ?`)
     .all(...args, limit + 1);
   return { items: rows.slice(0, limit).map(publicMessage), more: rows.length > limit };
 }
 
 function listCalls(q, { asc = false } = {}) {
-  const where = [];
-  const args = [];
-  if (q.q) where.push('number LIKE ?'), args.push(`%${q.q}%`);
-  if (q.before) where.push('id < ?'), args.push(Number(q.before));
-  if (q.since_id) where.push('id > ?'), args.push(Number(q.since_id));
+  const { where, args } = filters(q, { time: 'ts', search: ['number'] });
   const limit = intParam(q.limit, 50, 1, 200);
   const rows = db
-    .prepare(`SELECT id, device_id, slot, number, action, ring_ms, ts FROM calls ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id ${asc ? 'ASC' : 'DESC'} LIMIT ?`)
+    .prepare(`SELECT id, device_id, slot, number, action, ring_ms, ts FROM calls ${whereSql(where)} ORDER BY id ${asc ? 'ASC' : 'DESC'} LIMIT ?`)
     .all(...args, limit + 1);
   return { items: rows.slice(0, limit), more: rows.length > limit };
+}
+
+// ---------- CSV export ----------
+
+const CSV_MAX = 100_000;
+
+// One CSV cell. Text from an SMS could start with = and run as a formula in a spreadsheet: such a
+// cell gets a ' in front. Phone numbers like +15551234567 stay as they are.
+export function csvCell(v) {
+  let s = v == null ? '' : String(v);
+  if (/^[=@\t\r]/.test(s) || (/^[+-]/.test(s) && !/^[+-]?[\d ]+$/.test(s))) s = `'${s}`;
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function sendCsv(res, name, header, rows) {
+  // the BOM tells Excel the file is UTF-8, so Persian, Turkish and emoji show correctly
+  const body = '﻿' + [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n') + '\r\n';
+  res.writeHead(200, {
+    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Disposition': `attachment; filename="${name}"`,
+    'Cache-Control': 'no-store',
+  });
+  res.end(body);
+}
+
+// "2026-11-18 14:05:03" in the time zone of the person exporting
+function csvTime(tz) {
+  let zone = 'UTC';
+  try {
+    if (tz) new Intl.DateTimeFormat('en', { timeZone: String(tz) }), (zone = String(tz));
+  } catch {}
+  const f = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  });
+  return (ms) => (ms ? f.format(ms) : '');
+}
+
+function csvNames() {
+  const gw = new Map(db.prepare('SELECT d.id, COALESCE(k.name, d.name) name FROM devices d LEFT JOIN device_keys k ON k.device_id = d.id').all()
+    .map((d) => [d.id, d.name || 'SMS Gateway']));
+  const lines = allLines();
+  return {
+    gateway: (id) => (id ? gw.get(id) || id : ''),
+    simName: (id, slot) => (id && slot ? lines[`${id}:${slot}`]?.name || '' : ''),
+  };
+}
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+function exportMessages(q, res) {
+  const { where, args } = messageFilters(q);
+  const rows = db.prepare(`SELECT * FROM messages ${whereSql(where)} ORDER BY id DESC LIMIT ?`).all(...args, CSV_MAX);
+  const time = csvTime(q.tz);
+  const n = csvNames();
+  sendCsv(res, `sms-${today()}.csv`,
+    ['ID', 'Time', 'Direction', 'Status', 'Number', 'Text', 'Gateway', 'SIM', 'SIM name', 'SMS parts', 'Sent at', 'Source', 'Error'],
+    rows.map((m) => [m.id, time(m.created_at), m.direction === 'in' ? 'received' : 'sent', m.status, m.number, m.text,
+      n.gateway(m.device_id), m.slot || '', n.simName(m.device_id, m.slot), m.parts || '', time(m.sent_at), m.source || '', m.error || '']));
+}
+
+function exportCalls(q, res) {
+  const { where, args } = filters(q, { time: 'ts', search: ['number'] });
+  const rows = db.prepare(`SELECT * FROM calls ${whereSql(where)} ORDER BY id DESC LIMIT ?`).all(...args, CSV_MAX);
+  const time = csvTime(q.tz);
+  const n = csvNames();
+  sendCsv(res, `calls-${today()}.csv`,
+    ['ID', 'Time', 'Number', 'What happened', 'Rang (seconds)', 'Gateway', 'SIM', 'SIM name'],
+    rows.map((c) => [c.id, time(c.ts), c.number, c.action || '', c.ring_ms != null ? (c.ring_ms / 1000).toFixed(1) : '',
+      n.gateway(c.device_id), c.slot || '', n.simName(c.device_id, c.slot)]));
 }
 
 // ---------- panel ----------
@@ -136,6 +228,8 @@ router.get('/api/overview', panel(() => {
 }));
 
 router.get('/api/messages', panel((req) => listMessages(req.query)));
+router.get('/api/messages.csv', panel((req, res) => exportMessages(req.query, res)));
+router.get('/api/calls.csv', panel((req, res) => exportCalls(req.query, res)));
 router.post('/api/messages', panel(async (req) => {
   const b = await readJson(req);
   return createOutgoing({ to: b.to, text: b.text, sim: b.sim, source: 'panel' });
@@ -275,7 +369,10 @@ router.post('/api/devices', panel(async (req) => {
   const keyId = auth.addDeviceKey(b.key, b.name);
   return gatewayList().find((g) => g.key_id === keyId);
 }));
-router.post('/api/devices/:id/jobs', panel(async (req) => createJob(req.params.id, await readJson(req))));
+router.post('/api/devices/:id/jobs', panel(async (req) => {
+  const { type, slot, cmd, code } = await readJson(req);
+  return createJob(req.params.id, { type, slot, cmd, code });
+}));
 // Remove a gateway: its key stops working at once. Messages and calls stay.
 router.delete('/api/devices/key/:kid', panel((req) => {
   const k = db.prepare('SELECT * FROM device_keys WHERE id = ?').get(Number(req.params.kid));
@@ -365,12 +462,15 @@ router.post('/api/v1/sms', api(async (req, res) => {
 router.get('/api/v1/sms/:id', api((req) => getMessage(Number(req.params.id)) ?? notFound()));
 router.get('/api/v1/messages', api((req) => listMessages(req.query, { asc: !!req.query.since_id })));
 router.get('/api/v1/calls', api((req) => listCalls(req.query, { asc: !!req.query.since_id })));
+router.get('/api/v1/messages.csv', api((req, res) => exportMessages(req.query, res)));
+router.get('/api/v1/calls.csv', api((req, res) => exportCalls(req.query, res)));
 router.get('/api/v1/status', api(() =>
   devicesWithSims().map((d) => ({
     id: d.id, name: d.name, online: d.online, last_seen: d.last_seen,
     sims: d.sims.map((s) => ({
       sim: s.slot, name: d.lines[s.slot]?.name || null, enabled: d.lines[s.slot]?.enabled !== false,
       ready: s.ready, operator: s.operator, signal_dbm: s.dbm, state: s.state,
+      balance: s.balance ?? null, balance_at: s.balance_at ?? null,
     })),
   }))
 ));

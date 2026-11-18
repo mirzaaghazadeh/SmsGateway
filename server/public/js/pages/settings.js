@@ -47,6 +47,7 @@ function telegramPanel(tg, reload) {
   });
   const sms = h('input', { type: 'checkbox', checked: tg.sms });
   const calls = h('input', { type: 'checkbox', checked: tg.calls });
+  const sendOn = h('input', { type: 'checkbox', checked: tg.send });
   const alertDevice = h('input', { type: 'checkbox', checked: tg.alert_device });
   const alertSignal = h('input', { type: 'checkbox', checked: tg.alert_signal });
   const minutes = h('input', {
@@ -56,7 +57,14 @@ function telegramPanel(tg, reload) {
 
   // one row per line (gateway + SIM slot) with its chat IDs
   const inputs = new Map();
+  const modeInputs = new Map();
   let lastInput = null;
+  const skipSenders = h('input', {
+    class: 'input', id: 'tgskips', value: tg.skip_senders || '', spellcheck: 'false', placeholder: 'e.g. Promo, +15550001111',
+  });
+  const skipWords = h('input', {
+    class: 'input', id: 'tgskipw', value: tg.skip_words || '', spellcheck: 'false', placeholder: 'e.g. discount, campaign',
+  });
   const lineName = (l) => `${l.gateway} · ${l.name ? `${l.name} (SIM ${l.slot})` : `SIM ${l.slot}`}`;
   const rows = tg.lines.map((l) => {
     const key = `${l.device}:${l.slot}`;
@@ -66,6 +74,10 @@ function telegramPanel(tg, reload) {
       onfocus: () => (lastInput = { input, name: lineName(l) }),
     });
     inputs.set(key, input);
+    const mode = h('select', { class: 'select', 'aria-label': `What ${lineName(l)} forwards`, style: { width: 'auto' } },
+      h('option', { value: 'all' }, 'All SMS'), h('option', { value: 'codes' }, 'Only SMS with a code'));
+    mode.value = l.mode || 'all';
+    modeInputs.set(key, mode);
     const test = h('button', {
       class: 'btn', type: 'button', disabled: !tg.token_set,
       onclick: () => busy(test, async () => {
@@ -81,7 +93,8 @@ function telegramPanel(tg, reload) {
     const detail = l.operator || (l.state ? simState(l.state)[1] : 'Nothing reported yet');
     return h('tr', {},
       h('td', { style: { whiteSpace: 'nowrap' } }, h('b', {}, lineName(l)), h('div', { class: 'hint' }, detail)),
-      h('td', { style: { width: '100%' } }, h('div', { class: 'row' }, input, test)));
+      h('td', { style: { width: '100%' } }, h('div', { class: 'row' }, input, test)),
+      h('td', {}, mode));
   });
 
   // chats that wrote to the bot: click one to add it to the line box you clicked last
@@ -136,9 +149,11 @@ function telegramPanel(tg, reload) {
       await busy(save, async () => {
         try {
           const body = {
-            sms: sms.checked, calls: calls.checked,
+            sms: sms.checked, calls: calls.checked, send: sendOn.checked,
             alert_device: alertDevice.checked, alert_signal: alertSignal.checked, alert_minutes: Number(minutes.value),
             routes: Object.fromEntries([...inputs].map(([k, i]) => [k, i.value])),
+            modes: Object.fromEntries([...modeInputs].map(([k, s]) => [k, s.value])),
+            skip_senders: skipSenders.value, skip_words: skipWords.value,
           };
           if (token.value.trim()) body.token = token.value.trim();
           const r = await api('/api/telegram', { method: 'PUT', body });
@@ -157,7 +172,8 @@ function telegramPanel(tg, reload) {
           h('li', {}, 'In Telegram, open ', h('a', { href: 'https://t.me/BotFather', target: '_blank', rel: 'noopener' }, '@BotFather'), ', send /newbot and follow the steps. Paste the token it gives you below.'),
           h('li', {}, 'Open your new bot and press Start. For a group, add the bot to the group and write any message there.'),
           h('li', {}, 'Press Find chats, click a SIM line below, then click a chat to add it. One SIM can go to several chats.'),
-          h('li', {}, 'Send ', h('code', {}, '/stats'), ' to the bot any time: it answers with every gateway, SIM card, signal and the last 24 hours. Only the chats below get an answer.')
+          h('li', {}, 'Send ', h('code', {}, '/stats'), ' to the bot any time: it answers with every gateway, SIM card, signal and the last 24 hours. Only the chats below get an answer.'),
+          h('li', {}, 'To answer an SMS, reply to it in Telegram. The gateway sends your reply from the SIM that got the SMS and tells you when it went out.')
         ),
         tg.problem ? h('p', { class: 'note' }, icon('alert'), h('span', {}, tg.problem)) : null,
         h('div', { class: 'field' }, h('label', { for: 'tgtoken' }, 'Bot token'), token)
@@ -165,6 +181,8 @@ function telegramPanel(tg, reload) {
       h('div', { class: 'form' },
         h('label', { class: 'radio' }, sms, h('div', {}, h('b', {}, 'Send received SMS'), h('span', {}, 'Every SMS a SIM receives, with the sender and the text.'))),
         h('label', { class: 'radio' }, calls, h('div', {}, h('b', {}, 'Send missed calls'), h('span', {}, 'Who called which SIM.'))),
+        h('label', { class: 'radio' }, sendOn, h('div', {}, h('b', {}, 'Send SMS from Telegram'),
+          h('span', {}, 'Reply to a forwarded SMS to answer it from the same SIM, or write ', h('code', {}, '/send +15551234567 text'), '. Only the chats below can do this.'))),
         h('label', { class: 'radio' }, alertDevice, h('div', {}, h('b', {}, 'Alert: gateway offline'),
           h('span', {}, 'When the gateway stops checking in (no power or Wi-Fi), and when it is back. Goes to every chat of its SIMs.'))),
         h('label', { class: 'radio' }, alertSignal, h('div', {}, h('b', {}, 'Alert: SIM lost the network'),
@@ -175,9 +193,15 @@ function telegramPanel(tg, reload) {
     ),
     tg.lines.length
       ? h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
-        h('thead', {}, h('tr', {}, h('th', {}, 'SIM line'), h('th', {}, 'Send to these chats'))),
+        h('thead', {}, h('tr', {}, h('th', {}, 'SIM line'), h('th', {}, 'Send to these chats'), h('th', {}, 'Forward'))),
         h('tbody', {}, rows)))
       : h('p', { class: 'hint' }, 'The SIM lines show up here once a gateway has checked in.'),
+    h('div', { class: 'split even' },
+      h('div', { class: 'field' }, h('label', { for: 'tgskips' }, 'Do not forward these senders'), skipSenders,
+        h('p', { class: 'hint' }, 'Names or numbers, separated by commas. Their SMS and calls still show in the panel.')),
+      h('div', { class: 'field' }, h('label', { for: 'tgskipw' }, 'Do not forward SMS with these words'), skipWords,
+        h('p', { class: 'hint' }, 'Upper or lower case does not matter. "Only SMS with a code" above keeps just one-time codes.'))
+    ),
     tg.waiting ? h('p', { class: 'hint' }, `${plural(tg.waiting, 'message')} waiting to go to Telegram.`) : null,
     h('div', { class: 'row' }, save, remove)
   ));

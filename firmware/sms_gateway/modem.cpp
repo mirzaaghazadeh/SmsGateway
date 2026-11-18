@@ -61,12 +61,8 @@ void Modem::setEnabled(bool on) {
   if (!on) {
     requestReset(nullptr);  // ends a call, fails the job that is running
     while (!jobs_.empty()) {
-      if (jobs_.front().type == Job::AT) {
-        evAt(jobs_.front().id, false, "this SIM is turned off");
-        jobs_.pop_front();
-      } else {
-        finishJob(false, "this SIM is turned off");
-      }
+      if (jobs_.front().type != Job::SMS) failControlJob("this SIM is turned off");
+      else finishJob(false, "this SIM is turned off");
     }
     jobActive_ = false;
     del_.clear();
@@ -104,16 +100,20 @@ void Modem::requestReset(const char *why) {
   if (why) evLog(slot, String("restarting the SIM800L: ") + why, "warn");
   busy_ = false;
   if (jobActive_ && !jobs_.empty()) {
-    if (jobs_.front().type == Job::AT) {
-      evAt(jobs_.front().id, false, "module restarted");
-      jobs_.pop_front();
-      jobActive_ = false;
-    } else {
-      finishJob(false, "module restarted while sending");
-    }
+    if (jobs_.front().type != Job::SMS) failControlJob("module restarted");
+    else finishJob(false, "module restarted while sending");
   }
+  ussd_ = "";
+  ussdOpen_ = ussdGot_ = ussdWait_ = ussdCancel_ = false;
   if (call_) endCall(hangSent_ ? "rejected" : "missed");
   setState(St::RESET);
+}
+
+void Modem::failControlJob(const String &why) {
+  if (jobs_.empty()) return;
+  evAt(jobs_.front().id, false, why);
+  jobs_.pop_front();
+  jobActive_ = false;
 }
 
 bool Modem::enqueue(const Job &job) {
@@ -233,6 +233,10 @@ void Modem::handleLine(const String &l) {
       l.startsWith("+CIEV") || l.startsWith("+CPMS:") && !busy_) {
     return;  // network time and similar notices
   }
+  if (ussdOpen_ || l.startsWith("+CUSD:")) {  // a USSD answer (balance and the like)
+    ussdLine(l);
+    return;
+  }
 
   // ---- reply to the running command ----
   if (!busy_) return;
@@ -320,12 +324,8 @@ void Modem::step(uint32_t now) {
 
     case St::DEAD:
       while (!jobs_.empty()) {
-        if (jobs_.front().type == Job::AT) {
-          evAt(jobs_.front().id, false, "the SIM800L is not answering");
-          jobs_.pop_front();
-        } else {
-          finishJob(false, "the SIM800L is not answering");
-        }
+        if (jobs_.front().type != Job::SMS) failControlJob("the SIM800L is not answering");
+        else finishJob(false, "the SIM800L is not answering");
       }
       if (due(stUntil_)) {
         fails_ = 0;
@@ -381,6 +381,15 @@ void Modem::idle(uint32_t now) {
     send("AT+CMGD=" + String(del_.front()), T_CMGD, 5000);
     return;
   }
+  if (ussdCancel_) {  // a USSD menu waits for an answer we will not give: close it
+    ussdCancel_ = false;
+    send("AT+CUSD=2", T_CUSD_END, 5000);
+    return;
+  }
+  if (ussdWait_ && due(ussdUntil_)) {
+    ussdCancel_ = true;
+    finishUssd(false, "no answer from the network within 40 s");
+  }
   // the network the owner chose in the panel: automatic, or one network (falls back to automatic
   // by itself when that network is gone: COPS mode 4)
   if (netWant_.length() && netWant_ != netDone_ && due(netNext_) && !call_) {
@@ -405,7 +414,7 @@ void Modem::idle(uint32_t now) {
     send("AT+CMGL=4", T_CMGL, 20000);  // list every SMS on the SIM card (PDU mode)
     return;
   }
-  if (!call_ && !jobs_.empty() && (jobs_.front().type == Job::AT || ready())) {
+  if (!call_ && !ussdWait_ && !jobs_.empty() && (jobs_.front().type == Job::AT || ready())) {
     startJob();
     return;
   }
@@ -593,7 +602,62 @@ void Modem::onResult(Tag tag, Res res, const String &resp) {
     case T_ATH:
       endCall("rejected");
       break;
+
+    case T_CUSD:  // the network took the USSD code; its answer comes as +CUSD (maybe already here)
+      if (!ok) {
+        String why = resp;
+        why.trim();
+        finishUssd(false, res == Res::TIMEOUT ? String("no answer from the SIM800L") : why.length() ? why : String("ERROR"));
+      } else if (ussdGot_) {
+        finishUssd(true, ussd_);
+      } else {
+        ussdWait_ = true;
+        ussdUntil_ = now + 40000;
+      }
+      break;
+
+    case T_CUSD_END:
+      break;
   }
+}
+
+// ---------------- USSD ----------------
+
+// +CUSD: <status>[,"<text>",<dcs>]. The text can hold line breaks: it ends at the closing quote.
+void Modem::ussdLine(const String &l) {
+  if (!ussdOpen_) {
+    ussd_ = l;
+    int q = 0;
+    for (size_t i = 0; i < l.length(); i++) q += l[i] == '"';
+    if (q == 1) {
+      ussdOpen_ = true;
+      return;
+    }
+  } else {
+    if (ussd_.length() < 1500) ussd_ += "\n" + l;
+    if (l.indexOf('"') < 0) return;
+    ussdOpen_ = false;
+  }
+  // status 1: the network shows a menu and waits for a choice
+  if (ussd_.substring(6).toInt() == 1) ussdCancel_ = true;
+  bool mine = jobActive_ && !jobs_.empty() && jobs_.front().type == Job::USSD;
+  if (!mine) {
+    evLog(slot, "message from the network: " + ussd_);
+    ussd_ = "";
+    return;
+  }
+  if (busy_ && tag_ == T_CUSD) ussdGot_ = true;  // came before the OK
+  else finishUssd(true, ussd_);
+}
+
+void Modem::finishUssd(bool ok, const String &info) {
+  ussdWait_ = ussdGot_ = false;
+  if (jobActive_ && !jobs_.empty() && jobs_.front().type == Job::USSD) {
+    evAt(jobs_.front().id, ok, info);
+    jobs_.pop_front();
+  }
+  jobActive_ = false;
+  ussd_ = "";
 }
 
 // ---------------- SMS ----------------
@@ -654,6 +718,18 @@ void Modem::startJob() {
     String c = j.cmd;
     c.toUpperCase();
     send(j.cmd, T_AT_USER, c.startsWith("AT+COPS=?") ? 180000 : 30000);  // a network search takes minutes
+    return;
+  }
+  if (j.type == Job::USSD) {
+    bool okCode = j.cmd.length() >= 2 && j.cmd.length() <= 30;
+    for (size_t i = 0; okCode && i < j.cmd.length(); i++) okCode = isDigit(j.cmd[i]) || strchr("*#+", j.cmd[i]);
+    if (!okCode) {
+      failControlJob("not a USSD code");
+      return;
+    }
+    ussd_ = "";
+    ussdGot_ = ussdWait_ = false;
+    send("AT+CUSD=1,\"" + j.cmd + "\",15", T_CUSD, 30000);
     return;
   }
   if (j.parts.empty()) {

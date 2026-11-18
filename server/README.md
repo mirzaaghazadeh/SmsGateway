@@ -8,14 +8,23 @@ panel with hand-drawn SVG charts. One container, one SQLite file.
 
 - **Panel** (log in with `ADMIN_PASSWORD`):
   - Overview: gateway online/offline, Wi-Fi, both SIM cards (operator, signal, supply voltage), last 24 h.
-  - Messages: inbox and outbox, search, and a send form with a character counter.
-  - Missed calls.
+  - Messages: inbox and outbox, search, filter by SIM and days, CSV export, one-time codes with a
+    copy button, and a send form with a character counter.
+  - Missed calls, with the same filters and CSV export.
   - Signal charts: mobile signal, Wi-Fi, SIM800L supply voltage.
   - Analytics: per day, per SIM, top senders and callers.
   - Devices: add a gateway by its key, restart it or one SIM800L, an AT command console, the event log.
     SIM cards: a name per slot, turn an empty slot off, choose the mobile network (automatic or
-    one picked from a search; needs firmware 1.2.0).
+    one picked from a search; needs firmware 1.2.0), the balance and a keep-alive SMS (see below).
   - Settings.
+- **Balance** (firmware 1.3.0): the balance code of a SIM (USSD, like `*123#`) runs with
+  Devices → SIM cards → Check now, or by itself every 1 to 30 days. The answer shows in the panel,
+  on the overview, in `/stats` and in the API status; an automatic check also goes to the Telegram
+  chats of the SIM. A failed automatic check is tried again after 6 hours.
+- **Keep-alive SMS** (any firmware): many operators switch off a prepaid SIM that is not used for
+  some months. With a keep-alive, the server sends one SMS from that SIM to a number you choose when
+  the SIM sent nothing for 30 to 180 days (any SMS sent from it counts). If it never sent one, the
+  first goes out at its next check-in.
 - **Pairing**: each gateway makes its own device key (like `K7Q2-M9XD-4TPA-W3HZ`) and shows it on its
   setup page and screen. You add the key under Devices. The server keeps only a hash of it. On the
   gateway's first check-in, the key is tied to that ESP32, so a copied key does not work on another
@@ -99,8 +108,19 @@ several chats.
    test message to the chats of that line. **Save**.
 
 - **/stats**: send it to the bot and it answers with every gateway (online, Wi-Fi, firmware), each
-  SIM (operator, state, signal, voltage) and the last 24 hours. Only chats you added to a SIM line
-  get an answer; any other chat is told its chat ID, which makes it easy to add.
+  SIM (operator, state, signal, voltage, last balance) and the last 24 hours. Only chats you added
+  to a SIM line get an answer; any other chat is told its chat ID, which makes it easy to add.
+- **Reply and /send**: reply to a forwarded SMS and the reply goes to its sender, from the same SIM
+  of the same gateway. `/send +15551234567 text` sends a new SMS from any ready SIM, `/send 2
+  +15551234567 text` from SIM 2 (write the number without spaces). The chat hears when the SMS went
+  out (✅) or failed (❌). A sender with a name instead of a number (a bank) cannot get a reply.
+  Turn it off with "Send SMS from Telegram".
+- **/balance**: runs the balance code of every SIM that sends its messages to this chat; each
+  answer comes as its own message.
+- **Filters**: per SIM line, forward all SMS or only those with a one-time code. Senders (names or
+  numbers; `07700900123` and `+447700900123` count as the same) and words in the lists under the
+  table are not forwarded; senders' calls neither. Everything still shows in the panel.
+- **One-time codes**: a code in the SMS gets its own line, in a box that copies it with one tap.
 - **Alerts** (switch each on or off): a gateway that stops checking in for 90 s and comes back
   (to every chat of its SIMs), and a SIM that has had no network for a set number of minutes and
   gets it back (to that SIM's chats). Short drops send nothing.
@@ -143,7 +163,12 @@ Send `Authorization: Bearer <API_KEY>` with every call. The key is in the panel 
 | `GET /api/v1/sms/:id` | One message. `status` is `queued`, `sending`, `sent` or `failed` (with `error`). |
 | `GET /api/v1/messages?direction=in&since_id=0` | Received (`in`) or sent (`out`) messages. With `since_id` they come oldest first, so poll with the last id you saw. `limit` max 200. |
 | `GET /api/v1/calls?since_id=0` | Missed calls, same paging. |
-| `GET /api/v1/status` | Gateways and SIM cards: online, ready, operator, signal. |
+| `GET /api/v1/messages.csv`, `GET /api/v1/calls.csv` | The same as a CSV file (UTF-8, up to 100 000 rows, newest first). `tz=Europe/Istanbul` sets the time zone of the times; default UTC. |
+| `GET /api/v1/status` | Gateways and SIM cards: online, ready, operator, signal, last balance (`balance`, `balance_at`). |
+
+Filters for the lists and the CSV files: `sim` (1 or 2), `device` (gateway ID), `since` and
+`until` (milliseconds since 1970, or a date like `2026-11-18T00:00:00Z`; `until` is not included),
+`q` (part of the number or text); for messages also `direction` and `status`.
 
 ```bash
 curl -X POST https://sms.example.com/api/v1/sms \

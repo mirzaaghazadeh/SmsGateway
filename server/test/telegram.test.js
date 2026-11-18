@@ -1,6 +1,37 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { splitText, smsMessages, callMessage, parseChatIds, CHAT_RE, esc, statsMessage, deviceAlert, signalAlert, duration } from '../src/tgformat.js';
+import { splitText, smsMessages, callMessage, parseChatIds, CHAT_RE, esc, statsMessage, deviceAlert, signalAlert, duration, findCode, parseList, sameSender, skipReason } from '../src/tgformat.js';
+
+test('filters: senders written either way, words, only codes', () => {
+  assert.deepEqual(parseList('Promo, +1 555 000 1111\nAd;Promo'), ['Promo', '+1 555 000 1111', 'Ad']);
+  assert.ok(sameSender('MyBank', 'mybank'));
+  assert.ok(sameSender('+1 (555) 000-1111', '15550001111'));
+  assert.ok(sameSender('07700900123', '+447700900123')); // local and international (UK numbers for fiction)
+  assert.ok(!sameSender('1111', '+15550001111')); // too short to tell
+  assert.ok(!sameSender('Bank', 'MyBank'));
+  assert.ok(!sameSender('', ''));
+  const f = { senders: ['Promo', '+15550001111'], words: ['discount'] };
+  assert.equal(skipReason({ ...f, from: 'PROMO', text: 'hi' }), 'sender');
+  assert.equal(skipReason({ ...f, from: '+15550001111' }), 'sender'); // a call
+  assert.equal(skipReason({ ...f, from: 'Shop', text: 'Big DISCOUNT today' }), 'word');
+  assert.equal(skipReason({ ...f, from: 'Shop', text: 'Hello', mode: 'codes' }), 'no code');
+  assert.equal(skipReason({ ...f, from: 'Shop', text: 'Your code is 4821', mode: 'codes' }), null);
+  assert.equal(skipReason({ from: 'Shop', text: 'Hello' }), null);
+});
+
+test('the one-time code is found, amounts, dates and phone numbers are not', () => {
+  assert.equal(findCode('Your verification code is 482913. Do not share it.'), '482913');
+  assert.equal(findCode('G-123456 is your Google verification code.'), '123456');
+  assert.equal(findCode('Your login code: 123-456'), '123456');
+  assert.equal(findCode('کد تأیید شما: ۴۸۲۹۱۳'), '482913');
+  assert.equal(findCode('Doğrulama kodunuz 5521'), '5521');
+  assert.equal(findCode('Your code 4821 expires on 18.11.2026'), '4821');
+  assert.equal(findCode('Card 4417: payment of $24.90 approved'), null); // no code word
+  assert.equal(findCode('Call +15551234567 about your password'), null); // a phone number
+  assert.equal(findCode('Your password was changed at 12:30'), null);
+  const [m] = smsMessages({ from: 'Verify', text: 'Your code is 4321', line: 'Home · SIM 1' });
+  assert.match(m, /\n🔑 <code>4321<\/code>\n/);
+});
 
 test('/stats text and alerts', () => {
   const now = Date.UTC(2026, 10, 18, 12, 0);

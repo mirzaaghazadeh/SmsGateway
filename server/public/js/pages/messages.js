@@ -1,6 +1,6 @@
 import { h, clear, icon, api, poll, toast, busy, segmented, emptyState, plural, simTag, simOn } from '../ui.js';
 import { analyzeText, MAX_PARTS } from '../gsm.js';
-import { messageRow } from './parts.js';
+import { messageRow, filterBar } from './parts.js';
 
 const FILTERS = [
   ['all', 'All'],
@@ -29,12 +29,17 @@ export default function messages(page, { params }) {
     }, 250);
   });
 
+  // the segmented filter and the search, also used for the CSV export
+  const own = () => {
+    const p = {};
+    if (filter === 'in' || filter === 'out') p.direction = filter;
+    if (filter === 'failed' || filter === 'queued') p.status = filter;
+    if (q) p.q = q;
+    return p;
+  };
+  const bar = filterBar({ csv: '/api/messages.csv', query: own, onChange: () => load() });
   const query = (before) => {
-    const p = new URLSearchParams({ limit: '40' });
-    if (filter === 'in' || filter === 'out') p.set('direction', filter);
-    if (filter === 'failed') p.set('status', 'failed');
-    if (filter === 'queued') p.set('status', 'queued');
-    if (q) p.set('q', q);
+    const p = new URLSearchParams({ limit: '40', ...own(), ...bar.params() });
     if (before) p.set('before', before);
     return `/api/messages?${p}`;
   };
@@ -69,8 +74,10 @@ export default function messages(page, { params }) {
 
   function draw() {
     if (!items.length) {
-      clear(list, emptyState('inbox', q ? 'Nothing matches your search' : 'No messages here',
-        q ? 'Try part of the number or a word from the text.' : filter === 'all' ? 'Send one with the form, or text the SIM number.' : null));
+      const narrowed = q || bar.active();
+      clear(list, emptyState('inbox', narrowed ? 'Nothing matches your search' : 'No messages here',
+        q ? 'Try part of the number or a word from the text.' : bar.active() ? 'Try other days or another SIM card.'
+          : filter === 'all' ? 'Send one with the form, or text the SIM number.' : null));
       return;
     }
     clear(list,
@@ -96,6 +103,7 @@ export default function messages(page, { params }) {
           }, 'Filter messages'),
           h('label', { class: 'search' }, icon('search'), search)
         ),
+        bar.el,
         list
       ),
       compose(params.get('to') || '', load)

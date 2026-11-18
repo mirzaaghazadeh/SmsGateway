@@ -61,7 +61,7 @@ export default function devices(page) {
     clear(listBox, gateways.map((g) => gatewayPanel(g, refresh, r.firmware)));
     // SIM card settings: redraw only when they change, and never while you type in them
     const connected = gateways.filter((g) => g.connected);
-    const sig = JSON.stringify([connected.map((g) => [g.id, g.name, g.fw, g.online, g.lines, g.sims.map((x) => [x.slot, x.operator])]),
+    const sig = JSON.stringify([connected.map((g) => [g.id, g.name, g.fw, g.online, g.lines, g.sims.map((x) => [x.slot, x.operator, x.balance, x.balance_at])]),
       [...scans.entries()]]);
     if (sig !== simsSig && !simsBox.contains(document.activeElement)) {
       simsSig = sig;
@@ -240,6 +240,8 @@ function simsPanel(g, scans, refresh) {
         scan.error ? h('div', { class: 'hint' }, scan.error) : null)
     );
   };
+  const ussdOk = newer(g.fw, '1.2.9');
+  const on = [1, 2].filter((slot) => g.lines[slot].enabled);
   return panel(`SIM cards · ${g.name}`, null, h('div', { class: 'panel-body form' },
     h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
       h('thead', {}, h('tr', {}, h('th', {}, 'Slot'), h('th', {}, 'Name'), h('th', {}, 'In use'), h('th', {}, 'Mobile network'))),
@@ -247,8 +249,87 @@ function simsPanel(g, scans, refresh) {
     h('p', { class: 'hint' },
       'A name shows up across the panel and in Telegram. Turn a slot off when it has no module or SIM: the gateway stops trying it and the panel hides it. ',
       'Automatic lets the SIM800L pick the network. Pick one to stay on it; if it is gone, the module picks another by itself.'),
-    fwOk ? null : h('p', { class: 'note' }, icon('alert'), h('span', {}, `This gateway runs ${g.fw || 'old firmware'}. Names work now; on/off and the network choice need firmware 1.2.0.`))
+    fwOk ? null : h('p', { class: 'note' }, icon('alert'), h('span', {}, `This gateway runs ${g.fw || 'old firmware'}. Names work now; on/off and the network choice need firmware 1.2.0.`)),
+    on.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
+      h('thead', {}, h('tr', {}, h('th', {}, 'SIM'), h('th', {}, 'Balance'), h('th', {}, 'Keep-alive SMS'))),
+      h('tbody', {}, on.map((slot) => upkeepRow(g, slot, save, refresh, ussdOk))))) : null,
+    on.length ? h('p', { class: 'hint' },
+      'Balance: the code your operator uses to show the balance (often *123# or *100#). The answer shows here, and the gateway can check it by itself and send it to the Telegram chats of the SIM. ',
+      'Keep-alive: many operators switch off a prepaid SIM that has not been used for some months. The gateway sends one SMS to the number you choose (yours, or a free number of the operator) when the SIM sent nothing for that many days. If it sent nothing yet, the first one goes out at once.') : null,
+    on.length && !ussdOk ? h('p', { class: 'note' }, icon('alert'), h('span', {}, `Balance checks need firmware 1.3.0 on the gateway (it runs ${g.fw || 'old firmware'}). The keep-alive SMS works now.`)) : null
   ));
+}
+
+const EVERY = [[0, 'only when I check'], [1, 'every day'], [3, 'every 3 days'], [7, 'every week'], [14, 'every 2 weeks'], [30, 'every month']];
+const KEEP = [[0, 'Off'], [30, 'after 30 days'], [60, 'after 60 days'], [90, 'after 90 days'], [180, 'after 180 days']];
+const options = (list, value) => {
+  const sel = list.map(([v, label]) => h('option', { value: String(v) }, label));
+  if (!list.some(([v]) => v === value)) sel.push(h('option', { value: String(value) }, `after ${value} days`));
+  return sel;
+};
+
+// Balance code, automatic check and keep-alive SMS of one SIM.
+function upkeepRow(g, slot, save, refresh, ussdOk) {
+  const line = g.lines[slot];
+  const sim = g.sims.find((x) => x.slot === slot);
+  const label = line.name || `SIM ${slot}`;
+
+  const code = h('input', {
+    class: 'input mono', value: line.ussd, placeholder: '*123#', 'aria-label': `Balance code of ${label}`, style: { width: '110px' },
+    onkeydown: (e) => e.key === 'Enter' && e.target.blur(),
+    onchange: (e) => save(slot, { ussd: e.target.value }, e.target.value.trim() ? `${label}: balance code ${e.target.value.trim()}` : `${label}: balance code removed`),
+  });
+  const every = h('select', { class: 'select', 'aria-label': `How often ${label} checks its balance`, style: { width: 'auto' }, disabled: !line.ussd },
+    options(EVERY, line.balance_days));
+  every.value = String(line.balance_days);
+  every.addEventListener('change', () => save(slot, { balance_days: Number(every.value) },
+    Number(every.value) ? `${label}: balance checked ${EVERY.find(([v]) => v === Number(every.value))[1]}` : `${label}: balance checked only when you ask`));
+  const check = h('button', {
+    class: 'btn', type: 'button', disabled: !g.online || !line.ussd || !ussdOk,
+    title: !ussdOk ? 'Needs firmware 1.3.0 on the gateway' : !line.ussd ? 'Enter the balance code first' : 'Ask the network now (takes a few seconds)',
+    onclick: (e) => busy(e.currentTarget, async () => {
+      try {
+        await runJob(g.id, { type: 'ussd', slot }, (j) => toast(j.status === 'done' ? `${label}: ${j.result}` : `${label}: ${j.result || j.status}`, j.status === 'done' ? '' : 'bad'), 90_000);
+      } catch (ex) {
+        toast(ex.message, 'bad');
+      }
+      refresh();
+    }),
+  }, icon('refresh'), 'Check now');
+  const balance = sim?.balance
+    ? h('div', { class: 'balance' }, h('span', {}, sim.balance), h('span', { class: 'hint' }, ` · ${ago(sim.balance_at)}`))
+    : h('div', { class: 'hint' }, line.ussd ? 'Not checked yet' : 'No code set');
+
+  const days = h('select', { class: 'select', 'aria-label': `Keep-alive SMS of ${label}`, style: { width: 'auto' } }, options(KEEP, line.keep_days));
+  days.value = String(line.keep_days);
+  const to = h('input', {
+    class: 'input mono', type: 'tel', value: line.keep_to, placeholder: '+15551234567', 'aria-label': `Keep-alive SMS of ${label} goes to`,
+    style: { width: '160px' }, onkeydown: (e) => e.key === 'Enter' && e.target.blur(),
+  });
+  const text = h('input', {
+    class: 'input', value: line.keep_text, maxlength: 160, 'aria-label': `Text of the keep-alive SMS of ${label}`,
+    style: { flex: '1 1 180px', width: 'auto' }, onkeydown: (e) => e.key === 'Enter' && e.target.blur(),
+  });
+  const saveKeep = () => {
+    const n = Number(days.value);
+    if (n && !to.value.trim()) {
+      if (document.activeElement !== to) to.focus();
+      return toast('Enter the number the keep-alive SMS goes to', 'bad');
+    }
+    save(slot, { keep_days: n, keep_to: to.value, keep_text: text.value },
+      n ? `${label}: keep-alive SMS to ${to.value.trim()} after ${n} days without an SMS` : `${label}: keep-alive off`);
+  };
+  for (const el of [days, to, text]) el.addEventListener('change', saveKeep);
+
+  return h('tr', {},
+    h('td', { class: 'nowrap' }, h('b', {}, label), line.name ? h('div', { class: 'hint' }, `SIM ${slot}`) : null),
+    h('td', { style: { minWidth: '300px' } },
+      h('div', { class: 'row' }, code, every, check),
+      balance),
+    h('td', { style: { minWidth: '320px' } },
+      h('div', { class: 'row' }, days, to),
+      h('div', { class: 'row', style: { marginTop: '6px' } }, text))
+  );
 }
 
 // true when version a is newer than b ("1.1.0" > "1.0.9")

@@ -32,8 +32,12 @@ takes care of them:
 - Every SMS that arrives on either SIM goes over Wi-Fi to **your own server**, and so does every
   incoming call (rejected and logged as a missed call).
 - You read everything in a **web panel from anywhere**: verification codes, bank messages, who called.
-- Or get them in **Telegram**: each SIM can go to its own chats, `/stats` answers with the status,
-  and you get an alert when the gateway goes offline or a SIM loses the network.
+- Or get them in **Telegram**: each SIM can go to its own chats, a one-time code is one tap to copy,
+  and a reply to an SMS goes back to its sender from the same SIM. `/stats` answers with the status,
+  `/balance` with the balance, and you get an alert when the gateway goes offline or a SIM loses
+  the network.
+- The SIM cards stay alive: the gateway can check their balance and send an SMS now and then, so
+  the operator does not switch off a prepaid SIM that is rarely used.
 - Your own apps can **send SMS** through a small HTTP API, or get a **webhook** the moment a
   message arrives.
 - It is built from cheap off-the-shelf parts (an ESP32 and two SIM800L modules) in a 3D-printed
@@ -55,8 +59,12 @@ their own apps, with the HTTP API, webhooks and Telegram.
   PCB adds a fixed 4.0 V regulator, so a mis-set buck cannot reach the modems.
 - **Server + web panel** (Node.js, SQLite): SMS inbox/outbox, calls, device status, HTTP API,
   webhooks, Telegram forwarding per SIM, firmware updates over Wi-Fi.
-- **Per SIM**: a name ("Work"), a switch to turn an empty slot off, and the mobile network:
-  automatic, or one you pick from a search.
+- **Search and export**: filter messages and calls by SIM and days, download them as CSV.
+- **Telegram**: forwarding per SIM with filters (only codes, skip senders or words), replies and
+  `/send`, `/stats`, `/balance`, alerts.
+- **Per SIM**: a name ("Work"), a switch to turn an empty slot off, the mobile network (automatic,
+  or one you pick from a search), the balance (USSD code, checked by hand or every few days) and a
+  keep-alive SMS.
 
 > **2G only.** The SIM800L is a 2G (GSM) module. Many countries have already switched 2G off.
 > Check your operator before you build one, see [2G shutdowns](SHOPPING_LIST.md#6-caution-2g-shutdowns).
@@ -72,13 +80,13 @@ demo data.)
 
 | Messages | Missed calls |
 |---|---|
-| <img src="docs/panel/messages.png" alt="Messages page: inbox and outbox with search, and a form to send an SMS with a character counter" width="400"> | <img src="docs/panel/calls.png" alt="Missed calls page: who called which SIM and when, with a Text back button" width="400"> |
+| <img src="docs/panel/messages.png" alt="Messages page: inbox and outbox with search, filters by SIM and days, CSV export, one-time codes as badges, and a form to send an SMS with a character counter" width="400"> | <img src="docs/panel/calls.png" alt="Missed calls page: who called which SIM and when, with a Text back button" width="400"> |
 | **Signal** | **Analytics** |
 | <img src="docs/panel/signal.png" alt="Signal page: mobile signal of both SIMs and Wi-Fi over 24 hours, and the SIM800L supply voltage" width="400"> | <img src="docs/panel/analytics.png" alt="Analytics page: messages and missed calls per day, counts per SIM, and who texts and calls most" width="400"> |
 | **Devices** | **Telegram** |
-| <img src="docs/panel/devices.png" alt="Devices page: add a gateway by its key, firmware update, restart buttons, SIM card settings, AT console and event log" width="400"> | <img src="docs/panel/telegram.png" alt="Telegram settings: bot connected, received SMS and missed calls switched on, and the chats for each SIM line" width="400"> |
-| **SIM cards: name, on/off, network** | **Phone and dark mode** |
-| <img src="docs/panel/sim-cards.png" alt="SIM cards settings: a name for each slot, a switch to turn a slot off, and the mobile network, automatic or chosen from a search" width="400"> | <img src="docs/panel/mobile.png" alt="The overview on a phone" width="130"> <img src="docs/panel/overview-dark.png" alt="The overview in dark mode" width="262"> |
+| <img src="docs/panel/devices.png" alt="Devices page: add a gateway by its key, firmware update, restart buttons, SIM card settings, AT console and event log" width="400"> | <img src="docs/panel/telegram.png" alt="Telegram settings: bot connected, switches for SMS, calls, sending from Telegram and alerts, the chats and filter for each SIM line, senders and words that are not forwarded" width="400"> |
+| **SIM cards: name, network, balance, keep-alive** | **Phone and dark mode** |
+| <img src="docs/panel/sim-cards.png" alt="SIM cards settings: a name for each slot, on/off, the mobile network, the balance code with the last balance and a Check now button, and the keep-alive SMS" width="400"> | <img src="docs/panel/mobile.png" alt="The overview on a phone" width="130"> <img src="docs/panel/overview-dark.png" alt="The overview in dark mode" width="262"> |
 
 ## Two ways to build it
 
@@ -120,7 +128,7 @@ pick-and-place file, assembly drawing and order specs. For bare boards, upload
 | v2 PCB | Designed, design check clean (clearances, connections), order files ready. Updated after the first build with a fixed 4.0 V regulator for the SIM800Ls. **Not yet ordered or built** |
 | v2 case | Designed, collision-checked against models of the boards. **Not yet printed** |
 | Firmware | Runs on real hardware: setup hotspot, pairing, server sync, updates over Wi-Fi, a SIM800L registered on the network. Bench-test sketch included |
-| Server | Web panel, HTTP API, webhooks, Telegram, firmware updates from GitHub releases, 31 passing tests. Runs with a real gateway |
+| Server | Web panel, HTTP API, webhooks, Telegram, firmware updates from GitHub releases, 43 passing tests. Runs with a real gateway |
 
 ## Repository layout
 
@@ -333,18 +341,21 @@ restart). All SMS encoding and decoding (GSM-7 / UCS-2, multipart) happens on th
 |---|---|
 | `POST /api/v1/sms` | send: `{"to": "+15551234567", "text": "Hello", "sim": 0}` (`sim` 0 = any, 1, 2) |
 | `GET /api/v1/sms/:id` | status of one message |
-| `GET /api/v1/messages?direction=in&since_id=` | inbox / outbox |
-| `GET /api/v1/calls` | missed calls |
-| `GET /api/v1/status` | gateway and SIM status |
+| `GET /api/v1/messages?direction=in&since_id=` | inbox / outbox (filters: `sim`, `device`, `since`, `until`, `q`) |
+| `GET /api/v1/calls` | missed calls (same filters) |
+| `GET /api/v1/messages.csv`, `GET /api/v1/calls.csv` | the same as a CSV file |
+| `GET /api/v1/status` | gateway and SIM status, with the last balance |
 
 **Webhooks** (URL set in the panel): `sms.received`, `sms.sent`, `sms.failed`, `call.missed`,
 `device.offline`, `device.online`, signed with HMAC-SHA256 in the `X-Gateway-Signature` header.
 
 **Telegram** (Settings → Telegram): paste a bot token from @BotFather and choose, for each SIM,
-the chats that get its SMS and missed calls. A long SMS arrives as one message, joined from its
-parts. Send `/stats` to the bot for the status of every gateway and SIM, and turn on alerts for a
-gateway that goes offline or a SIM that loses the network. The server does all of this; the
-gateway does not talk to Telegram. Details in [server/README.md](server/README.md#telegram).
+the chats that get its SMS and missed calls, all of them or only one-time codes. A long SMS
+arrives as one message, joined from its parts. Reply to an SMS to answer it from the same SIM, or
+send `/send +15551234567 text`. Send `/stats` for the status of every gateway and SIM, `/balance`
+for the balance, and turn on alerts for a gateway that goes offline or a SIM that loses the
+network. The server does all of this; the gateway does not talk to Telegram. Details in
+[server/README.md](server/README.md#telegram).
 
 ## Contributing
 

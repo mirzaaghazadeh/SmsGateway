@@ -1,9 +1,17 @@
 // SIM lines: one SIM slot of one gateway. The owner can give each a name, turn an empty slot off
-// (the gateway stops trying that SIM800L and the panel hides it) and choose its mobile network
-// (automatic, or one network by its code, like 28601). Stored as one setting:
-// { "<device>:<slot>": { name, off, net } }, only what differs from the default.
+// (the gateway stops trying that SIM800L and the panel hides it), choose its mobile network
+// (automatic, or one network by its code, like 28601), set the USSD code that shows the balance
+// (checked every few days if wanted) and a keep-alive SMS, so a prepaid SIM that is rarely used
+// is not switched off by the operator. Stored as one setting:
+// { "<device>:<slot>": { name, off, net, ussd, bal, keep, keep_to, keep_text } }, only what differs
+// from the default.
 import { setting, setSetting, log } from './db.js';
 import { HttpError } from './http.js';
+import { normalizeNumber } from './pdu.js';
+import { analyzeText } from './shared/gsm.js';
+import { USSD_RE } from './ussd.js';
+
+export const KEEP_TEXT = 'Keep-alive from my SMS gateway';
 
 export const SLOTS = [1, 2];
 
@@ -17,8 +25,18 @@ export function allLines() {
 
 export function lineOf(device, slot, all = allLines()) {
   const l = all[`${device}:${slot}`] || {};
-  return { name: l.name || '', enabled: !l.off, network: l.net || 'auto' };
+  return {
+    name: l.name || '', enabled: !l.off, network: l.net || 'auto',
+    ussd: l.ussd || '', balance_days: l.bal || 0,                                    // balance check
+    keep_days: l.keep || 0, keep_to: l.keep_to || '', keep_text: l.keep_text || KEEP_TEXT, // keep-alive SMS
+  };
 }
+
+const dayCount = (v, max, what) => {
+  const n = Number(v ?? 0);
+  if (!Number.isInteger(n) || n < 0 || n > max) throw new HttpError(400, `${what}: a number of days from 0 (off) to ${max}`);
+  return n;
+};
 
 export const linesFor = (device, all = allLines()) => Object.fromEntries(SLOTS.map((s) => [s, lineOf(device, s, all)]));
 
@@ -62,6 +80,39 @@ export function updateLine(device, slot, b) {
     else throw new HttpError(400, 'The network code has 5 or 6 digits (country + operator), like 28601');
     said.push(cur.net ? `network ${cur.net} chosen` : 'network automatic');
   }
+  if (b.ussd !== undefined) {
+    const code = String(b.ussd ?? '').replace(/\s+/g, '');
+    if (code && !USSD_RE.test(code)) throw new HttpError(400, 'A balance code looks like *123# (digits, * and #, ending in #)');
+    if (code) cur.ussd = code;
+    else delete cur.ussd;
+    said.push(code ? `balance code ${code}` : 'balance code removed');
+  }
+  if (b.balance_days !== undefined) {
+    const d = dayCount(b.balance_days, 60, 'Balance check');
+    if (d) cur.bal = d;
+    else delete cur.bal;
+    said.push(d ? `balance checked every ${d} days` : 'no automatic balance check');
+  }
+  if (b.keep_to !== undefined) {
+    const raw = String(b.keep_to ?? '').trim();
+    const n = raw ? normalizeNumber(raw) : null;
+    if (raw && !n) throw new HttpError(400, 'The keep-alive SMS needs a phone number, like +15551234567');
+    if (n) cur.keep_to = n.display;
+    else delete cur.keep_to;
+  }
+  if (b.keep_text !== undefined) {
+    const t = String(b.keep_text ?? '').replace(/\s+/g, ' ').trim();
+    if (t && analyzeText(t).parts > 1) throw new HttpError(400, 'The keep-alive text must fit in one SMS');
+    if (t && t !== KEEP_TEXT) cur.keep_text = t;
+    else delete cur.keep_text;
+  }
+  if (b.keep_days !== undefined) {
+    const d = dayCount(b.keep_days, 365, 'Keep-alive');
+    if (d) cur.keep = d;
+    else delete cur.keep;
+    said.push(d ? `keep-alive SMS every ${d} days` : 'keep-alive off');
+  }
+  if (cur.keep && !cur.keep_to) throw new HttpError(400, 'Enter the number the keep-alive SMS goes to');
   if (Object.keys(cur).length) all[key] = cur;
   else delete all[key];
   setSetting('lines', JSON.stringify(all));

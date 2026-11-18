@@ -78,7 +78,7 @@ function shell() {
   stopRail?.();
   stopRail = poll(async () => {
     const { gateways, lines } = await api('/api/devices');
-    setLines(lines);
+    setLines(lines, gateways);
     const on = gateways.filter((d) => d.online).length;
     const ready = gateways.flatMap((d) => (d.online ? d.sims : [])).filter((x) => x.ready).length;
     const connected = gateways.some((d) => d.connected);
@@ -88,7 +88,7 @@ function shell() {
     );
   }, 10_000);
   // the SIM names and on/off first, so the first page shows them; draw it even if this fails
-  api('/api/devices').then((r) => setLines(r.lines)).catch(() => {}).finally(() => route());
+  api('/api/devices').then((r) => setLines(r.lines, r.gateways)).catch(() => {}).finally(() => route());
 }
 
 function login(message) {

@@ -1,5 +1,8 @@
 // Telegram message text: HTML escaping, the layout of SMS and call notices, and splitting text that
 // is longer than one Telegram message. No database here, so the tests can load it directly.
+import { findCode } from './shared/otp.js';
+
+export { findCode };
 
 // Telegram allows 4096 characters per message; leave room for the header and the part counter.
 export const CHUNK = 3500;
@@ -42,9 +45,10 @@ export function smsMessages({ from, text, line, parts = 1, note = null, smsTime 
   // the operator's timestamp, only when the SMS came more than 5 minutes after it was sent
   const late = smsTime && receivedAt - smsTime > 5 * 60_000 ? `Sent ${when(smsTime, tz)}` : null;
   const info = [line, parts > 1 ? `${parts} SMS joined` : null, late].filter(Boolean).join(' · ');
+  const code = findCode(text); // shown on its own line: <code> copies with one tap in Telegram
   return pieces.map((piece, i) => {
     const counter = pieces.length > 1 ? ` (${i + 1}/${pieces.length})` : '';
-    const head = `📩 <b>${esc(from)}</b>${counter}\n<i>${esc(info)}</i>`;
+    const head = `📩 <b>${esc(from)}</b>${counter}\n<i>${esc(info)}</i>${i === 0 && code ? `\n🔑 <code>${code}</code>` : ''}`;
     const tail = i === pieces.length - 1 && note ? `\n\n⚠️ ${esc(note)}` : '';
     return `${head}\n\n${esc(piece)}${tail}`;
   });
@@ -75,7 +79,7 @@ export function duration(ms) {
   return `${Math.floor(h / 24)} d ${h % 24} h`;
 }
 
-// gateways: [{ name, online, lastSeen, fw, ssid, rssi, uptime, sims: [{ label, operator, state, dbm, mv }] }]
+// gateways: [{ name, online, lastSeen, fw, ssid, rssi, uptime, sims: [{ label, operator, state, dbm, mv, balance, balanceAt }] }]
 export function statsMessage({ gateways, counts, now = Date.now() }) {
   const out = ['📊 <b>SMS gateway status</b>'];
   if (!gateways.length) out.push('', 'No gateway has checked in yet.');
@@ -89,6 +93,7 @@ export function statsMessage({ gateways, counts, now = Date.now() }) {
       const parts = [s.operator ? esc(s.operator) : null, STATE_TEXT[s.state] || esc(s.state || 'not reported'),
         s.dbm != null ? `${s.dbm} dBm (${quality(s.dbm)})` : null, s.mv ? `${(s.mv / 1000).toFixed(2)} V` : null];
       out.push(`• ${esc(s.label)}: ${parts.filter(Boolean).join(', ')}`);
+      if (s.balance) out.push(`   💰 ${esc(s.balance)}${s.balanceAt ? ` (${duration(now - s.balanceAt)} ago)` : ''}`);
     }
   }
   const c = counts;
@@ -114,4 +119,34 @@ export const CHAT_RE = /^(-?\d{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$/;
 export function parseChatIds(v) {
   const list = Array.isArray(v) ? v : String(v ?? '').split(/[\s,;]+/);
   return [...new Set(list.map((x) => String(x).trim()).filter(Boolean))];
+}
+
+// ---------- filters: what not to forward ----------
+
+// "Promo, +1 555 000 1111\nAd" -> ['Promo', '+1 555 000 1111', 'Ad']
+export const parseList = (v) =>
+  [...new Set(String(v ?? '').split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean))].slice(0, 100);
+
+const squash = (s) => String(s).toLowerCase().replace(/[\s().-]/g, '');
+
+// The same sender, written either way: "MyBank" = "mybank", "+15551234567" = "15551234567",
+// "+447700900123" = "07700900123" (a local number matches the end of the international one).
+export function sameSender(a, b) {
+  const x = squash(a).replace(/^\+/, '');
+  const y = squash(b).replace(/^\+/, '');
+  if (x === y) return !!x;
+  if (!/^\d+$/.test(x) || !/^\d+$/.test(y)) return false;
+  const [short, long] = x.length < y.length ? [x, y] : [y, x];
+  const tail = short.replace(/^0+/, '');
+  return tail.length >= 7 && long.endsWith(tail);
+}
+
+// Why an SMS or a call is not forwarded, or null to forward it.
+export function skipReason({ from, text = null, mode = 'all', senders = [], words = [] }) {
+  if (senders.some((s) => sameSender(s, from))) return 'sender';
+  if (text == null) return null; // a call
+  const t = text.toLowerCase();
+  if (words.some((w) => t.includes(w.toLowerCase()))) return 'word';
+  if (mode === 'codes' && !findCode(text)) return 'no code';
+  return null;
 }

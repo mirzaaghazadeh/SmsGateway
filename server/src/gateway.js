@@ -5,10 +5,13 @@ import { HttpError } from './http.js';
 import { encodeSubmit, decodePdu, normalizeNumber } from './pdu.js';
 import { analyzeText } from './shared/gsm.js';
 import { emit } from './webhook.js';
-import { updateOffer } from './firmware.js';
+import { updateOffer, newer } from './firmware.js';
 import { ledForDevice } from './led.js';
-import { forwardSms, forwardCall, alertDevice, lineState, checkSignalAlerts } from './telegram.js';
-import { simConfig } from './lines.js';
+import { forwardSms, forwardCall, alertDevice, lineState, checkSignalAlerts, notifyOutgoing, notifyBalance } from './telegram.js';
+import { simConfig, allLines, lineOf } from './lines.js';
+import { parseCusd, oneLine, USSD_RE } from './ussd.js';
+
+export const USSD_FW = '1.3.0'; // first firmware that runs USSD codes (balance checks)
 
 export const ONLINE_MS = 30_000;
 const JOB_TIMEOUT_MS = 240_000; // a network search (AT+COPS=?) can take 3 minutes
@@ -37,7 +40,8 @@ export function callMode() {
 
 // ---------- outgoing SMS ----------
 
-export function createOutgoing({ to, text, sim = 0, source = 'api' }) {
+// device: only this gateway may send it (a reply from the SIM that got the SMS, a keep-alive SMS)
+export function createOutgoing({ to, text, sim = 0, source = 'api', tgChat = null, device = null }) {
   const n = normalizeNumber(to);
   if (!n) throw new HttpError(400, 'Invalid phone number');
   if (typeof text !== 'string' || !text.trim()) throw new HttpError(400, 'Text is empty');
@@ -52,10 +56,10 @@ export function createOutgoing({ to, text, sim = 0, source = 'api' }) {
   const info = analyzeText(text);
   const r = db
     .prepare(
-      `INSERT INTO messages (direction, number, text, status, encoding, parts, pdus, source, want_slot, created_at)
-       VALUES ('out', ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO messages (direction, number, text, status, encoding, parts, pdus, source, want_slot, created_at, tg_chat, device_id)
+       VALUES ('out', ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(n.display, text, info.encoding, parts.length, JSON.stringify(parts), source, slot, Date.now());
+    .run(n.display, text, info.encoding, parts.length, JSON.stringify(parts), source, slot, Date.now(), tgChat, device);
   return getMessage(Number(r.lastInsertRowid));
 }
 
@@ -65,7 +69,7 @@ export function getMessage(id) {
 }
 
 export function publicMessage(m) {
-  const { pdus, ukey, not_before, ...rest } = m;
+  const { pdus, ukey, not_before, tg_chat, ...rest } = m;
   return rest;
 }
 
@@ -157,6 +161,11 @@ export function handleSync(body, now = Date.now()) {
       }
     }
 
+    try {
+      lineChores(id, str(body.fw, 20), now); // keep-alive SMS and balance checks that are due
+    } catch (e) {
+      log(`Keep-alive / balance check: ${e.message}`, { level: 'warn', device_id: id });
+    }
     const jobs = dispatch(id, Math.min(5, Math.max(0, int(body.free) ?? 2)), now);
     const interval = Math.min(60, Math.max(2, int(setting('sync_interval', 5)) ?? 5));
     return {
@@ -277,7 +286,8 @@ function jobResult(device, jobId, ok, ev) {
   const job = db.prepare('SELECT * FROM jobs WHERE id = ? AND device_id = ?').get(jobId, device);
   if (!job || !['sent', 'lost'].includes(job.status)) return; // unknown or already handled
   const now = Date.now();
-  const result = ok ? str(ev.out ?? (Array.isArray(ev.ref) ? 'ref ' + ev.ref.join(',') : ev.ref), 4000) : str(ev.err || ev.out || 'error', 4000);
+  let result = ok ? str(ev.out ?? (Array.isArray(ev.ref) ? 'ref ' + ev.ref.join(',') : ev.ref), 4000) : str(ev.err || ev.out || 'error', 4000);
+  if (job.type === 'ussd') return ussdResult(job, ok, result, now);
   db.prepare('UPDATE jobs SET status = ?, result = ?, done_at = ? WHERE id = ?').run(ok ? 'done' : 'failed', result, now, jobId);
   if (job.type !== 'sms') return;
   const msg = db.prepare('SELECT * FROM messages WHERE id = ?').get(job.message_id);
@@ -285,8 +295,27 @@ function jobResult(device, jobId, ok, ev) {
   if (ok) {
     db.prepare("UPDATE messages SET status = 'sent', sent_at = ?, error = NULL WHERE id = ?").run(now, msg.id);
     emit('sms.sent', { id: msg.id, device, sim: job.slot, to: msg.number, text: msg.text, parts: msg.parts, sent_at: now });
+    toTelegram(() => notifyOutgoing(msg, true), device, job.slot);
   } else {
     failOrRetry(msg, result, now);
+  }
+}
+
+// The answer to a USSD code: the job keeps the readable text; the answer to the balance code of the
+// line is kept as its balance. A check from Telegram (/balance) or an automatic one goes to Telegram.
+function ussdResult(job, ok, raw, now) {
+  const p = JSON.parse(job.payload || '{}');
+  const a = ok ? parseCusd(raw) : { ok: false, error: raw };
+  const text = a.ok ? a.text : a.error;
+  db.prepare('UPDATE jobs SET status = ?, result = ?, done_at = ? WHERE id = ?').run(a.ok ? 'done' : 'failed', text, now, job.id);
+  const balanceCode = lineOf(job.device_id, job.slot).ussd;
+  if (a.ok && p.code === balanceCode) {
+    db.prepare('UPDATE sims SET balance = ?, balance_at = ? WHERE device_id = ? AND slot = ?').run(text, now, job.device_id, job.slot);
+  }
+  log(a.ok ? `SIM ${job.slot}: ${p.code} answered: ${oneLine(text, 300)}` : `SIM ${job.slot}: ${p.code} failed: ${text}`,
+    { device_id: job.device_id, slot: job.slot, level: a.ok ? 'info' : 'warn' });
+  if (p.tg || p.auto) {
+    toTelegram(() => notifyBalance({ device: job.device_id, slot: job.slot, ok: a.ok, text, chat: p.tg || null }), job.device_id, job.slot);
   }
 }
 
@@ -298,6 +327,7 @@ function failOrRetry(msg, error, now) {
     db.prepare("UPDATE messages SET status = 'failed', error = ? WHERE id = ?").run(error, msg.id);
     log(`SMS #${msg.id} to ${msg.number} failed: ${error}`, { level: 'error', device_id: msg.device_id, slot: msg.slot });
     emit('sms.failed', { id: msg.id, to: msg.number, text: msg.text, error });
+    toTelegram(() => notifyOutgoing(msg, false, error), msg.device_id, msg.slot);
   }
 }
 
@@ -312,7 +342,7 @@ function dispatch(device, free, now) {
   for (const j of jobs) {
     db.prepare("UPDATE jobs SET status = 'sent', assigned_at = ? WHERE id = ?").run(now, j.id);
     const p = JSON.parse(j.payload || '{}');
-    out.push({ id: j.id, type: j.type, slot: j.slot || 0, ...(p.cmd ? { cmd: p.cmd } : {}) });
+    out.push({ id: j.id, type: j.type, slot: j.slot || 0, ...(p.cmd ? { cmd: p.cmd } : {}), ...(p.code ? { code: p.code } : {}) });
   }
   free -= out.length;
   if (free <= 0) return out;
@@ -352,18 +382,27 @@ function dispatch(device, free, now) {
 
 // ---------- device commands from the panel ----------
 
-const COMMANDS = ['at', 'reboot', 'modem_reset', 'setup'];
+const COMMANDS = ['at', 'reboot', 'modem_reset', 'setup', 'ussd'];
 
-export function createJob(device, { type, slot, cmd }) {
+// ussd: code (default: the balance code of the line); tg = Telegram chat that asked, auto = scheduled
+export function createJob(device, { type, slot, cmd, code, tg = null, auto = false }) {
   if (!COMMANDS.includes(type)) throw new HttpError(400, 'Unknown command');
-  if (!db.prepare('SELECT 1 FROM devices WHERE id = ?').get(device)) throw new HttpError(404, 'Device not found');
+  const d = db.prepare('SELECT fw FROM devices WHERE id = ?').get(device);
+  if (!d) throw new HttpError(404, 'Device not found');
   slot = SLOTS.includes(Number(slot)) ? Number(slot) : 0;
-  if ((type === 'at' || type === 'modem_reset') && !slot) throw new HttpError(400, 'Choose SIM 1 or 2');
+  if ((type === 'at' || type === 'modem_reset' || type === 'ussd') && !slot) throw new HttpError(400, 'Choose SIM 1 or 2');
   let payload = {};
   if (type === 'at') {
     cmd = String(cmd || '').trim();
     if (!/^AT/i.test(cmd) || cmd.length > 200 || /[\r\n\x1a\x1b]/.test(cmd)) throw new HttpError(400, 'Command must start with AT');
     payload = { cmd };
+  }
+  if (type === 'ussd') {
+    code = String(code || lineOf(device, slot).ussd || '').replace(/\s+/g, '');
+    if (!code) throw new HttpError(400, 'Set the balance code of this SIM first (like *123#)');
+    if (!USSD_RE.test(code)) throw new HttpError(400, 'A USSD code looks like *123# (digits, * and #, ending in #)');
+    if (newer(USSD_FW, d.fw)) throw new HttpError(409, `Balance checks need firmware ${USSD_FW} or newer on the gateway. Update it under Devices.`);
+    payload = { code, ...(tg ? { tg: String(tg) } : {}), ...(auto ? { auto: true } : {}) };
   }
   const r = db
     .prepare("INSERT INTO jobs (device_id, type, slot, payload, status, created_at) VALUES (?, ?, ?, ?, 'queued', ?)")
@@ -378,6 +417,41 @@ export function getJob(id) {
 // ---------- maintenance (every 30 s) ----------
 
 let lastCleanup = 0;
+const DAY = 86400_000;
+
+// What each SIM line does by itself, checked at each check-in of its gateway while the SIM is on the
+// network:
+// - keep-alive: an SMS to the chosen number when the SIM sent nothing for the chosen number of days
+//   (operators switch off prepaid SIMs that are not used; any SMS sent from the SIM counts).
+// - balance: the balance code every few days. A failed check waits 6 hours before the next try.
+function lineChores(device, fw, now) {
+  const all = allLines();
+  for (const slot of SLOTS) {
+    const l = all[`${device}:${slot}`];
+    if (!l || l.off || !(l.keep || (l.bal && l.ussd))) continue;
+    const sim = db.prepare('SELECT * FROM sims WHERE device_id = ? AND slot = ?').get(device, slot);
+    if (!isReady(sim)) continue;
+
+    if (l.keep && l.keep_to) {
+      const lastSent = db.prepare("SELECT MAX(sent_at) t FROM messages WHERE direction = 'out' AND status = 'sent' AND device_id = ? AND slot = ?").get(device, slot).t || 0;
+      const waiting = db.prepare("SELECT 1 FROM messages WHERE source = 'keepalive' AND device_id = ? AND want_slot = ? AND status IN ('queued', 'sending')").get(device, slot);
+      if (!waiting && now - Math.max(lastSent, sim.keep_at || 0) >= l.keep * DAY) {
+        const line = lineOf(device, slot);
+        createOutgoing({ to: line.keep_to, text: line.keep_text, sim: slot, source: 'keepalive', device });
+        db.prepare('UPDATE sims SET keep_at = ? WHERE device_id = ? AND slot = ?').run(now, device, slot);
+        log(`SIM ${slot}: keep-alive SMS to ${line.keep_to} (nothing sent for ${l.keep} days)`, { device_id: device, slot });
+      }
+    }
+
+    if (l.bal && l.ussd && !newer(USSD_FW, fw)) {
+      const busy = db.prepare("SELECT 1 FROM jobs WHERE type = 'ussd' AND device_id = ? AND slot = ? AND status IN ('queued', 'sent')").get(device, slot);
+      if (!busy && now - (sim.balance_at || 0) >= l.bal * DAY && now - (sim.balance_try || 0) >= 6 * 3600_000) {
+        db.prepare('UPDATE sims SET balance_try = ? WHERE device_id = ? AND slot = ?').run(now, device, slot);
+        createJob(device, { type: 'ussd', slot, code: l.ussd, auto: true });
+      }
+    }
+  }
+}
 
 export function maintenance(now = Date.now()) {
   tx(() => {
@@ -392,6 +466,7 @@ export function maintenance(now = Date.now()) {
     for (const m of db.prepare("SELECT * FROM messages WHERE direction = 'out' AND status = 'queued' AND created_at < ?").all(now - 86400_000)) {
       db.prepare("UPDATE messages SET status = 'failed', error = ? WHERE id = ?").run(m.error || 'Not sent within 24 h (no SIM ready)', m.id);
       emit('sms.failed', { id: m.id, to: m.number, text: m.text, error: 'Not sent within 24 h' });
+      toTelegram(() => notifyOutgoing(m, false, 'not sent within 24 h (no SIM was ready)'), null, null);
     }
 
     // multipart SMS whose other parts never came: deliver what we have after 30 min

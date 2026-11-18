@@ -258,6 +258,13 @@ svg.icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentCol
 .search { position: relative; flex: 1 1 220px; max-width: 340px; }
 .search .icon { position: absolute; left: 11px; top: 50%; translate: 0 -50%; color: var(--text-3); width: 16px; height: 16px; }
 .search .input { padding-left: 34px; min-height: 36px; }
+[hidden] { display: none !important; }
+.balance { margin-top: 6px; white-space: pre-line; font-size: 0.9rem; overflow-wrap: anywhere; }
+/* second row: SIM, days and export */
+.toolbar.filters { padding: 8px 18px; gap: 8px; background: var(--surface-2); }
+.toolbar.filters .input, .toolbar.filters .select { width: auto; min-height: 32px; padding-top: 4px; padding-bottom: 4px; font-size: 0.86rem; }
+.toolbar.filters .range { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.toolbar.filters .range .input { max-width: 150px; }
 
 /* ---------- status ---------- */
 
@@ -356,6 +363,7 @@ button.item:hover { background: var(--surface-2); }
 .item .who { display: block; font-family: var(--mono); font-size: 0.9rem; font-weight: 500; line-height: 1.35; }
 .item .text { display: block; margin-top: 2px; }
 .item .meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 0.8rem; color: var(--text-3); white-space: nowrap; }
+.item .meta .otp { font-family: var(--mono); font-weight: 600; color: var(--text); background: var(--surface-2); padding: 1px 6px; border-radius: 6px; }
 .item .text { color: var(--text-2); font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: plaintext; }
 .item.open .text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
 .detail { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 8px; font-size: 0.82rem; color: var(--text-3); align-items: center; }

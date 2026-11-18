@@ -4,8 +4,27 @@ Versions are the gateway firmware versions (`FW_VERSION` in `firmware/sms_gatewa
 is a GitHub release tagged `vX.Y.Z` with the firmware files. Server changes ship with the version they
 were made for; the server deploys from `main`.
 
-## Unreleased
+## 1.3.0
 
+- Balance: set the balance code of each SIM (often `*123#` or `*100#`) under Devices → SIM cards
+  and press Check now: the answer of the network shows in the panel, on the overview and in
+  `/stats`. The gateway can also check it by itself every few days and send it to the Telegram
+  chats of the SIM, and `/balance` in Telegram checks every SIM of that chat. Needs this firmware
+  (it runs USSD codes and waits for the answer of the network).
+- Keep-alive SMS: many operators switch off a prepaid SIM that is not used for some months. Turn
+  it on for a SIM and the gateway sends one SMS to a number you choose when that SIM sent nothing
+  for 30, 60, 90 or 180 days. Works with every firmware.
+- Telegram: reply to a forwarded SMS and the gateway sends your reply to that sender, from the same
+  SIM. `/send +15551234567 text` sends a new SMS (`/send 2 …` from SIM 2). The chat hears when the
+  SMS went out or failed. A switch in Settings turns this off.
+- Telegram filters: for each SIM, forward all SMS or only those with a one-time code; never forward
+  some senders (their SMS and calls) or SMS with some words. Everything still shows in the panel.
+- One-time codes: the code in an SMS shows as a badge in the panel, with a button to copy it, and
+  on its own line in Telegram, where one tap copies it.
+- Messages and Missed calls: choose a SIM card and a range of days, and download what the list
+  shows as a CSV file for Excel, Google Sheets or Numbers. The API has the same filters (`device`,
+  `sim`, `since`, `until`) and `GET /api/v1/messages.csv` and `/api/v1/calls.csv`.
+- Persian guide: [README.fa.md](README.fa.md) now walks through the wiring step by step.
 - Telegram: send `/stats` to the bot for the status of every gateway and SIM (signal, voltage,
   operator) and the last 24 hours. Only chats added to a SIM line get an answer.
 - Telegram alerts, each with its own switch in Settings: a gateway goes offline or comes back, and
