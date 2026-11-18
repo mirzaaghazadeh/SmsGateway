@@ -13,6 +13,10 @@ printed case.
 
 All case images are rendered from the OpenSCAD source in `source/`.
 
+> **Note:** some pictures in this README show an earlier version of the panel, the case or the
+> PCB, so the latest version can look a little different. The text always describes the latest
+> version.
+
 ## The idea
 
 This is a hobby project. I carried the idea around for about three years before I finally sat
