@@ -61,7 +61,7 @@ export default function devices(page) {
     clear(listBox, gateways.map((g) => gatewayPanel(g, refresh, r.firmware)));
     // SIM card settings: redraw only when they change, and never while you type in them
     const connected = gateways.filter((g) => g.connected);
-    const sig = JSON.stringify([connected.map((g) => [g.id, g.name, g.fw, g.online, g.lines, g.sims.map((x) => [x.slot, x.operator, x.balance, x.balance_at])]),
+    const sig = JSON.stringify([connected.map((g) => [g.id, g.name, g.fw, g.online, g.lines, g.sims.map((x) => [x.slot, x.operator, x.reg, x.roaming_mode, x.balance, x.balance_at])]),
       [...scans.entries()]]);
     if (sig !== simsSig && !simsBox.contains(document.activeElement)) {
       simsSig = sig;
@@ -231,24 +231,39 @@ function simsPanel(g, scans, refresh) {
       },
     }, icon('search'), scan.busy ? 'Searching…' : 'Find networks');
 
-    const state = !line.enabled ? 'Off' : sim?.operator ? `${sim.operator}` : sim ? sim.state : 'not reported yet';
+    const roam = h('select', {
+      class: 'select', 'aria-label': `Roaming mode of SIM ${slot}`, disabled: !line.enabled, style: { width: 'auto' },
+      title: 'While roaming mode is on, calls ring instead of being hung up and this SIM sends no SMS',
+    }, ROAM.map(([v, label]) => h('option', { value: v }, label)));
+    roam.value = line.roaming;
+    roam.addEventListener('change', () => save(slot, { roaming: roam.value },
+      `SIM ${slot}: ${{ off: 'roaming mode off', auto: 'roaming mode on while roaming', on: 'roaming mode always on' }[roam.value]}`));
+
+    const state = !line.enabled ? 'Off' : sim?.operator ? `${sim.operator}${sim.reg === 5 ? ' · roaming' : ''}` : sim ? sim.state : 'not reported yet';
     return h('tr', {},
       h('td', { class: 'nowrap' }, h('b', {}, `SIM ${slot}`), h('div', { class: 'hint' }, state)),
       h('td', {}, name),
       h('td', {}, h('label', { class: 'row', style: { gap: '6px' } }, on, line.enabled ? 'On' : 'Off')),
       h('td', { style: { minWidth: '300px' } }, h('div', { class: 'row' }, net, find),
-        scan.error ? h('div', { class: 'hint' }, scan.error) : null)
+        scan.error ? h('div', { class: 'hint' }, scan.error) : null),
+      h('td', {}, roam, sim?.roaming_mode ? h('div', { class: 'hint ok-text' }, 'On now: calls ring, no SMS') : null)
     );
   };
   const ussdOk = newer(g.fw, '1.2.9');
   const on = [1, 2].filter((slot) => g.lines[slot].enabled);
   return panel(`SIM cards · ${g.name}`, null, h('div', { class: 'panel-body form' },
     h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
-      h('thead', {}, h('tr', {}, h('th', {}, 'Slot'), h('th', {}, 'Name'), h('th', {}, 'In use'), h('th', {}, 'Mobile network'))),
+      h('thead', {}, h('tr', {}, h('th', {}, 'Slot'), h('th', {}, 'Name'), h('th', {}, 'In use'), h('th', {}, 'Mobile network'), h('th', {}, 'Roaming mode'))),
       h('tbody', {}, [1, 2].map(row)))),
     h('p', { class: 'hint' },
       'A name shows up across the panel and in Telegram. Turn a slot off when it has no module or SIM: the gateway stops trying it and the panel hides it. ',
       'Automatic lets the SIM800L pick the network. Pick one to stay on it; if it is gone, the module picks another by itself.'),
+    h('p', { class: 'hint' },
+      'Roaming mode saves money with a SIM from another country: hanging up a call or sending an SMS can cost there. While it is on, calls ring until the caller gives up (still logged as missed calls) and this SIM sends no SMS: ',
+      'no replies, no keep-alive SMS, no automatic balance check. "While roaming" turns it on only when the network says the SIM is roaming.'),
+    g.online && !newer(g.fw, '1.3.9') && [1, 2].some((s) => g.lines[s].roaming !== 'off')
+      ? h('p', { class: 'note' }, icon('alert'), h('span', {}, `This gateway runs ${g.fw || 'old firmware'}: while a SIM is in roaming mode, calls ring on both SIMs. Firmware 1.4.0 handles each SIM on its own.`))
+      : null,
     fwOk ? null : h('p', { class: 'note' }, icon('alert'), h('span', {}, `This gateway runs ${g.fw || 'old firmware'}. Names work now; on/off and the network choice need firmware 1.2.0.`)),
     on.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
       h('thead', {}, h('tr', {}, h('th', {}, 'SIM'), h('th', {}, 'Balance'), h('th', {}, 'Keep-alive SMS'))),
@@ -260,6 +275,7 @@ function simsPanel(g, scans, refresh) {
   ));
 }
 
+const ROAM = [['off', 'Off'], ['auto', 'While roaming'], ['on', 'Always on']];
 const EVERY = [[0, 'only when I check'], [1, 'every day'], [3, 'every 3 days'], [7, 'every week'], [14, 'every 2 weeks'], [30, 'every month']];
 const KEEP = [[0, 'Off'], [30, 'after 30 days'], [60, 'after 60 days'], [90, 'after 90 days'], [180, 'after 180 days']];
 const options = (list, value) => {

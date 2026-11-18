@@ -240,6 +240,7 @@ svg.icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentCol
 .led-table input[type="color"] { width: 44px; height: 32px; padding: 0; border: 1px solid var(--border-strong); border-radius: 6px; background: none; cursor: pointer; }
 .led-table .select { min-height: 34px; min-width: 130px; }
 .error-text { font-size: 0.86rem; color: var(--bad); }
+.hint.ok-text { color: var(--ok); margin-top: 4px; }
 .form { display: flex; flex-direction: column; gap: 14px; }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .grow { flex: 1 1 auto; min-width: 0; }

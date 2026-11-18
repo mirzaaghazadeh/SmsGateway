@@ -91,7 +91,8 @@ export function statsMessage({ gateways, counts, now = Date.now() }) {
     if (wifi) out.push(wifi);
     for (const s of g.sims) {
       const parts = [s.operator ? esc(s.operator) : null, STATE_TEXT[s.state] || esc(s.state || 'not reported'),
-        s.dbm != null ? `${s.dbm} dBm (${quality(s.dbm)})` : null, s.mv ? `${(s.mv / 1000).toFixed(2)} V` : null];
+        s.dbm != null ? `${s.dbm} dBm (${quality(s.dbm)})` : null, s.mv ? `${(s.mv / 1000).toFixed(2)} V` : null,
+        s.roaming ? 'roaming mode (calls ring, no SMS)' : null];
       out.push(`• ${esc(s.label)}: ${parts.filter(Boolean).join(', ')}`);
       if (s.balance) out.push(`   💰 ${esc(s.balance)}${s.balanceAt ? ` (${duration(now - s.balanceAt)} ago)` : ''}`);
     }

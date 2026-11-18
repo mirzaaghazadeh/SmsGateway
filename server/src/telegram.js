@@ -4,7 +4,7 @@
 import { db, setting, setSetting, log } from './db.js';
 import { HttpError } from './http.js';
 import { smsMessages, callMessage, parseChatIds, CHAT_RE, statsMessage, deviceAlert, signalAlert, esc, parseList, skipReason } from './tgformat.js';
-import { simLabel, allLines, lineOf } from './lines.js';
+import { simLabel, allLines, lineOf, roamingGuard } from './lines.js';
 import { createOutgoing, createJob } from './gateway.js';
 import { oneLine } from './ussd.js';
 
@@ -199,6 +199,7 @@ function statsData(now) {
         return {
           label: simLabel(d.id, slot), operator: s?.operator, state: s?.state, dbm: dbmOf(s?.csq), mv: s?.mv,
           balance: s?.balance ? oneLine(s.balance, 120) : null, balanceAt: s?.balance_at,
+          roaming: roamingGuard(lineOf(d.id, slot, all), s),
         };
       }),
     }));

@@ -31,6 +31,12 @@ class Modem {
   const char *stateName() const;
 
   bool rejectCalls = true;  // set from the server config
+  // Roaming mode (firmware 1.4.0), from the server config: while it is on, a call is not hung up
+  // (it rings until the caller gives up) and no SMS is sent, because both can cost money abroad.
+  // AUTO: only while the SIM is roaming (registration status 5).
+  enum Roam : uint8_t { ROAM_OFF, ROAM_AUTO, ROAM_ON };
+  uint8_t roamMode = ROAM_OFF;
+  bool roamGuard() const { return roamMode == ROAM_ON || (roamMode == ROAM_AUTO && reg == 5); }
   // From the server config (firmware 1.2.0): the owner turned this slot off, or chose its network.
   void setEnabled(bool on);
   void setNetwork(const char *want);  // "auto" or a network code like "28601"

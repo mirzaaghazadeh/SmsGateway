@@ -12,7 +12,7 @@ import { gsm7Encode } from '../src/shared/gsm.js';
 
 const KEYS = { ADMIN_PASSWORD: 'admin-pass', API_KEY: 'api-key' };
 // what a SIM line has besides its name, on/off and network, when nothing is set
-const LINE_DEFAULTS = { ussd: '', balance_days: 0, keep_days: 0, keep_to: '', keep_text: 'Keep-alive from my SMS gateway' };
+const LINE_DEFAULTS = { ussd: '', balance_days: 0, keep_days: 0, keep_to: '', keep_text: 'Keep-alive from my SMS gateway', roaming: 'off' };
 const GW_KEY = 'K7Q2M9XD4TPAW3HZ'; // what the gateway made and shows on its setup page
 let BASE;
 let proc, dir, cookie, fakeGithub, fakeTelegram;
@@ -553,7 +553,7 @@ test('SIM lines: a name, a slot turned off, a chosen network', async () => {
 
   // the gateway gets both in its config (older firmware ignores it)
   const sync = await device({ ...status(), fw: '1.2.0' });
-  assert.deepEqual(sync.body.config.sims, { 1: { on: true, net: '28601' }, 2: { on: false, net: 'auto' } });
+  assert.deepEqual(sync.body.config.sims, { 1: { on: true, net: '28601', roam: 'off' }, 2: { on: false, net: 'auto', roam: 'off' } });
   const d = await panel('GET', '/api/devices');
   assert.deepEqual(d.body.lines['aabbccddeeff:1'], { name: 'Work', enabled: true, network: '28601', ...LINE_DEFAULTS });
   assert.equal(d.body.gateways[0].lines[2].enabled, false);
@@ -565,7 +565,8 @@ test('SIM lines: a name, a slot turned off, a chosen network', async () => {
 
   await panel('PUT', `${dev}/1`, { name: '', network: 'auto' });
   await panel('PUT', `${dev}/2`, { enabled: true });
-  assert.deepEqual((await device(status())).body.config.sims, { 1: { on: true, net: 'auto' }, 2: { on: true, net: 'auto' } });
+  assert.deepEqual((await device(status())).body.config.sims,
+    { 1: { on: true, net: 'auto', roam: 'off' }, 2: { on: true, net: 'auto', roam: 'off' } });
 });
 
 test('balance check (USSD) from the panel, from Telegram and by itself; keep-alive SMS', async () => {
@@ -633,6 +634,59 @@ test('balance check (USSD) from the panel, from Telegram and by itself; keep-ali
   await panel('PUT', `${dev}/1`, { ussd: '' });
   d = await panel('GET', '/api/devices');
   assert.deepEqual(d.body.gateways[0].lines[2], { name: '', enabled: true, network: 'auto', ...LINE_DEFAULTS });
+});
+
+test('roaming mode: calls ring and the SIM sends no SMS, on demand or only while roaming', async () => {
+  const dev = '/api/devices/aabbccddeeff/sims';
+  assert.equal((await panel('PUT', `${dev}/1`, { roaming: 'sometimes' })).status, 400);
+  assert.equal((await panel('PUT', `${dev}/1`, { roaming: 'auto' })).body.roaming, 'auto');
+  const roamingSims = (reg) => status().sims.map((x) => (x.slot === 1 ? { ...x, reg } : x));
+  const sync = (reg, fw = '1.0.0', ev = []) => device({ ...status(ev), fw, sims: roamingSims(reg) });
+  const before = (await panel('GET', '/api/settings')).body.call_mode;
+  await panel('PUT', '/api/settings', { call_mode: 'reject' }); // the gateway hangs up calls
+
+  // at home: nothing changes
+  let s = await sync(1);
+  assert.equal(s.body.config.calls, 'reject');
+  assert.equal(s.body.config.sims[1].roam, 'auto');
+  assert.equal((await apiCall('POST', '/api/v1/sms', { to: '+15554443333', text: 'home', sim: 1 })).status, 201);
+  s = await sync(1);
+  const home = s.body.jobs.find((j) => j.type === 'sms' && decodePdu(j.parts[0].pdu).text === 'home');
+  await sync(1, '1.0.0', [{ seq: ++seq, t: 'job', job: home.id, ok: true, ref: [40] }]);
+
+  // roaming: firmware before 1.4.0 lets calls ring on the whole gateway; 1.4.0 does it per SIM
+  s = await sync(5);
+  assert.equal(s.body.config.calls, 'ignore');
+  assert.equal((await sync(5, '1.4.0')).body.config.calls, 'reject');
+  const st = await apiCall('GET', '/api/v1/status');
+  assert.equal(st.body[0].sims.find((x) => x.sim === 1).roaming_mode, true);
+  const no = await apiCall('POST', '/api/v1/sms', { to: '+15554443333', text: 'abroad', sim: 1 });
+  assert.equal(no.status, 409);
+  assert.match(no.body.error, /SIM 1 is in roaming mode, so it sends no SMS/);
+  // "any SIM" waits: SIM 1 is roaming, SIM 2 has no card
+  const any = await apiCall('POST', '/api/v1/sms', { to: '+15554443333', text: 'any sim', sim: 0 });
+  s = await sync(5, '1.4.0');
+  assert.ok(!s.body.jobs.some((j) => j.type === 'sms' && decodePdu(j.parts[0].pdu).text === 'any sim'));
+  // back home: it goes out
+  s = await sync(1, '1.4.0');
+  const later = s.body.jobs.find((j) => j.type === 'sms' && decodePdu(j.parts[0].pdu).text === 'any sim');
+  assert.equal(later.slot, 1);
+  await sync(1, '1.4.0', [{ seq: ++seq, t: 'job', job: later.id, ok: true, ref: [41] }]);
+  assert.equal((await apiCall('GET', `/api/v1/sms/${any.body.id}`)).body.status, 'sent');
+
+  // an SMS that waits for SIM 1 when roaming mode is switched on fails at once, with the reason
+  await sync(1, '1.4.0');
+  const waiting = await apiCall('POST', '/api/v1/sms', { to: '+15554443333', text: 'too late', sim: 1 });
+  await panel('PUT', `${dev}/1`, { roaming: 'on' });
+  s = await sync(1, '1.4.0');
+  assert.ok(!s.body.jobs.some((j) => j.type === 'sms'));
+  const failed = await apiCall('GET', `/api/v1/sms/${waiting.body.id}`);
+  assert.equal(failed.body.status, 'failed');
+  assert.match(failed.body.error, /roaming mode/);
+
+  await panel('PUT', `${dev}/1`, { roaming: 'off' });
+  assert.equal((await sync(1)).body.config.calls, 'reject');
+  await panel('PUT', '/api/settings', { call_mode: before });
 });
 
 test('a reading of 0 from the gateway (none yet) is stored as missing', async () => {

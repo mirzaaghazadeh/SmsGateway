@@ -37,6 +37,7 @@ export function simCard(sim, slot, online = true, device = null) {
       h('dt', {}, 'Supply'), h('dd', { class: lowV ? 'error-text' : '' }, volts(sim.mv), lowV ? ' · too low' : ''),
       h('dt', {}, 'SIM ID'), h('dd', { class: 'mono' }, sim.iccid || '–'),
       h('dt', {}, 'IMEI'), h('dd', { class: 'mono' }, sim.imei || '–'),
+      sim.roaming_mode ? [h('dt', {}, 'Roaming mode'), h('dd', {}, 'On: calls ring, no SMS')] : null,
       sim.balance ? [h('dt', {}, 'Balance'), h('dd', { title: `${sim.balance}\n${fullTime(sim.balance_at)}` },
         sim.balance.replace(/\s*\n+\s*/g, ' · '))] : null,
       sim.queue ? [h('dt', {}, 'Sending'), h('dd', {}, `${sim.queue} in queue`)] : null

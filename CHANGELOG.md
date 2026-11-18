@@ -4,6 +4,17 @@ Versions are the gateway firmware versions (`FW_VERSION` in `firmware/sms_gatewa
 is a GitHub release tagged `vX.Y.Z` with the firmware files. Server changes ship with the version they
 were made for; the server deploys from `main`.
 
+## 1.4.0
+
+- Roaming mode for each SIM (Devices → SIM cards): for a SIM from another country, where hanging
+  up a call or sending an SMS costs money. While it is on, calls ring until the caller gives up
+  (they are still logged as missed calls) and the SIM sends no SMS: no replies from Telegram, no
+  keep-alive SMS, no automatic balance check. "While roaming" turns it on only when the network
+  says the SIM is roaming; "Always on" keeps it on. An SMS asked for on that SIM fails at once with
+  the reason; "any SIM" uses the other one.
+- Firmware 1.4.0 handles calls for each SIM on its own. With older firmware, calls ring on both
+  SIMs of the gateway while one of them is in roaming mode.
+
 ## 1.3.0
 
 - Balance: set the balance code of each SIM (often `*123#` or `*100#`) under Devices → SIM cards

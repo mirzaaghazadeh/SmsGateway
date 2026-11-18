@@ -8,7 +8,7 @@ import { emit } from './webhook.js';
 import { updateOffer, newer } from './firmware.js';
 import { ledForDevice } from './led.js';
 import { forwardSms, forwardCall, alertDevice, lineState, checkSignalAlerts, notifyOutgoing, notifyBalance } from './telegram.js';
-import { simConfig, allLines, lineOf } from './lines.js';
+import { simConfig, allLines, lineOf, roamingGuard, simLabel, ROAMING_FW } from './lines.js';
 import { parseCusd, oneLine, USSD_RE } from './ussd.js';
 
 export const USSD_FW = '1.3.0'; // first firmware that runs USSD codes (balance checks)
@@ -40,11 +40,39 @@ export function callMode() {
 
 // ---------- outgoing SMS ----------
 
+// ---------- roaming mode ----------
+
+// Roaming mode is on right now for this SIM of this gateway (calls ring, no SMS goes out).
+export function guarded(device, slot, all = allLines()) {
+  const sim = db.prepare('SELECT reg FROM sims WHERE device_id = ? AND slot = ?').get(device, slot);
+  return roamingGuard(lineOf(device, slot, all), sim);
+}
+
+// An SMS asked for on this SIM slot cannot go out: on every gateway that could send it, the SIM is
+// in roaming mode.
+function roamingBlocks(slot, device = null) {
+  const devices = device ? [device] : db.prepare('SELECT device_id FROM device_keys WHERE device_id IS NOT NULL').all().map((r) => r.device_id);
+  const all = allLines();
+  return devices.length > 0 && devices.every((d) => guarded(d, slot, all));
+}
+
+const roamingError = (slot, device) =>
+  `${device ? simLabel(device, slot) : `SIM ${slot}`} is in roaming mode, so it sends no SMS. `
+  + 'Send from the other SIM, or turn roaming mode off under Devices → SIM cards.';
+
+// Firmware older than 1.4.0 knows only one call setting for both SIMs: while a SIM of the gateway is
+// in roaming mode, let calls ring on both rather than hang up.
+function callModeFor(device, fw) {
+  if (!newer(ROAMING_FW, fw)) return callMode();
+  return SLOTS.some((s) => guarded(device, s)) ? 'ignore' : callMode();
+}
+
 // device: only this gateway may send it (a reply from the SIM that got the SMS, a keep-alive SMS)
 export function createOutgoing({ to, text, sim = 0, source = 'api', tgChat = null, device = null }) {
   const n = normalizeNumber(to);
   if (!n) throw new HttpError(400, 'Invalid phone number');
   if (typeof text !== 'string' || !text.trim()) throw new HttpError(400, 'Text is empty');
+  if (SLOTS.includes(Number(sim)) && roamingBlocks(Number(sim), device)) throw new HttpError(409, roamingError(Number(sim), device));
   text = text.replace(/\r\n?/g, '\n');
   let parts;
   try {
@@ -171,7 +199,7 @@ export function handleSync(body, now = Date.now()) {
     return {
       ack,
       jobs,
-      config: { calls: callMode(), interval, led: ledForDevice(), sims: simConfig(id) },
+      config: { calls: callModeFor(id, str(body.fw, 20)), interval, led: ledForDevice(), sims: simConfig(id) },
       update: updateOffer(id, str(body.fw, 20), now),
       time: Math.floor(now / 1000),
     };
@@ -347,8 +375,13 @@ function dispatch(device, free, now) {
   free -= out.length;
   if (free <= 0) return out;
 
-  const ready = db.prepare('SELECT * FROM sims WHERE device_id = ?').all(device).filter(isReady).map((s) => s.slot);
-  if (!ready.length) return out;
+  // a SIM in roaming mode sends nothing: an SMS asked for on it fails at once, unless another
+  // gateway can still send it
+  const all = allLines();
+  const roaming = new Set(SLOTS.filter((s) => guarded(device, s, all)));
+  const ready = db.prepare('SELECT * FROM sims WHERE device_id = ?').all(device).filter(isReady).map((s) => s.slot)
+    .filter((s) => !roaming.has(s));
+  if (!ready.length && !roaming.size) return out;
   const load = new Map(ready.map((s) => [s, 0]));
   for (const r of db
     .prepare("SELECT slot, COUNT(*) n FROM messages WHERE direction = 'out' AND device_id = ? AND created_at > ? GROUP BY slot")
@@ -365,8 +398,17 @@ function dispatch(device, free, now) {
     if (free <= 0) break;
     let slot = m.want_slot;
     if (slot) {
+      if (roaming.has(slot) && roamingBlocks(slot, m.device_id)) {
+        const error = roamingError(slot, m.device_id || device);
+        db.prepare("UPDATE messages SET status = 'failed', error = ? WHERE id = ?").run(error, m.id);
+        log(`SMS #${m.id} to ${m.number} not sent: SIM ${slot} is in roaming mode`, { level: 'warn', device_id: device, slot });
+        emit('sms.failed', { id: m.id, to: m.number, text: m.text, error });
+        toTelegram(() => notifyOutgoing(m, false, error), device, slot);
+        continue;
+      }
       if (!ready.includes(slot)) continue;
     } else {
+      if (!ready.length) continue;
       slot = [...load.entries()].sort((a, b) => a[1] - b[1])[0][0];
     }
     load.set(slot, load.get(slot) + 1);
@@ -430,7 +472,7 @@ function lineChores(device, fw, now) {
     const l = all[`${device}:${slot}`];
     if (!l || l.off || !(l.keep || (l.bal && l.ussd))) continue;
     const sim = db.prepare('SELECT * FROM sims WHERE device_id = ? AND slot = ?').get(device, slot);
-    if (!isReady(sim)) continue;
+    if (!isReady(sim) || roamingGuard(lineOf(device, slot, all), sim)) continue; // roaming mode: nothing that costs
 
     if (l.keep && l.keep_to) {
       const lastSent = db.prepare("SELECT MAX(sent_at) t FROM messages WHERE direction = 'out' AND status = 'sent' AND device_id = ? AND slot = ?").get(device, slot).t || 0;

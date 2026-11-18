@@ -25,6 +25,13 @@ panel with hand-drawn SVG charts. One container, one SQLite file.
   some months. With a keep-alive, the server sends one SMS from that SIM to a number you choose when
   the SIM sent nothing for 30 to 180 days (any SMS sent from it counts). If it never sent one, the
   first goes out at its next check-in.
+- **Roaming mode** (per SIM: Off, While roaming, Always on): for a SIM from another country, where
+  hanging up a call or sending an SMS costs money. While it is on, calls ring until the caller gives
+  up (still logged as missed calls) and the SIM sends no SMS: an SMS asked for on it fails at once
+  with the reason (`409` in the API), "any SIM" uses the other SIM, and keep-alive SMS and
+  automatic balance checks wait. "While roaming" follows the network (registration status 5).
+  Firmware 1.4.0 handles calls per SIM; older firmware lets calls ring on both SIMs of the gateway
+  while one is in roaming mode. `GET /api/v1/status` shows `roaming_mode` per SIM.
 - **Pairing**: each gateway makes its own device key (like `K7Q2-M9XD-4TPA-W3HZ`) and shows it on its
   setup page and screen. You add the key under Devices. The server keeps only a hash of it. On the
   gateway's first check-in, the key is tied to that ESP32, so a copied key does not work on another

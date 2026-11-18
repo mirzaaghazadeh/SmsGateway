@@ -372,7 +372,7 @@ void Modem::step(uint32_t now) {
 }
 
 void Modem::idle(uint32_t now) {
-  if (call_ && rejectCalls && !hangSent_ && (callNum_.length() || now - callStart_ > 3000)) {
+  if (call_ && rejectCalls && !roamGuard() && !hangSent_ && (callNum_.length() || now - callStart_ > 3000)) {
     hangSent_ = true;
     send("ATH", T_ATH, 5000);
     return;
@@ -734,6 +734,10 @@ void Modem::startJob() {
   }
   if (j.parts.empty()) {
     finishJob(false, "empty SMS");
+    return;
+  }
+  if (roamGuard()) {  // the server holds these back too; this covers a change in the last seconds
+    finishJob(false, "roaming mode is on for this SIM: it sends no SMS");
     return;
   }
   part_ = 0;

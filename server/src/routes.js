@@ -8,7 +8,7 @@ import { webhookSecret, testWebhook, EVENTS } from './webhook.js';
 import { checkReleases, firmwareView, cachedFirmware, readFirmware, newer, maybeCheckReleases } from './firmware.js';
 import { ledSettings, setLedSettings, LED_STATES, LED_MODES } from './led.js';
 import { telegramView, setTelegram, recentChats, testChats, lineLabel } from './telegram.js';
-import { allLines, linesFor, updateLine } from './lines.js';
+import { allLines, linesFor, updateLine, lineOf, roamingGuard } from './lines.js';
 
 export const router = new Router();
 
@@ -65,7 +65,10 @@ function gatewayList(now = Date.now()) {
         lines: d ? linesFor(d.id, lines) : null,   // name, on/off and network of SIM 1 and 2
         sims: !d ? [] : sims
           .filter((s) => s.device_id === d.id)
-          .map((s) => ({ ...s, dbm: csqToDbm(s.csq), ready: s.state === 'ready' && (s.reg === 1 || s.reg === 5) })),
+          .map((s) => ({
+            ...s, dbm: csqToDbm(s.csq), ready: s.state === 'ready' && (s.reg === 1 || s.reg === 5),
+            roaming_mode: roamingGuard(lineOf(d.id, s.slot, lines), s), // calls ring, no SMS goes out
+          })),
       };
     });
 }
@@ -470,7 +473,7 @@ router.get('/api/v1/status', api(() =>
     sims: d.sims.map((s) => ({
       sim: s.slot, name: d.lines[s.slot]?.name || null, enabled: d.lines[s.slot]?.enabled !== false,
       ready: s.ready, operator: s.operator, signal_dbm: s.dbm, state: s.state,
-      balance: s.balance ?? null, balance_at: s.balance_at ?? null,
+      balance: s.balance ?? null, balance_at: s.balance_at ?? null, roaming_mode: s.roaming_mode,
     })),
   }))
 ));

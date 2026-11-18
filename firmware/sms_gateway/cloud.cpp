@@ -252,7 +252,7 @@ static bool sync() {
     uint32_t iv = cfg["interval"] | 5;
     interval = constrain(iv, 2u, 60u) * 1000;
     led::apply(cfg["led"]);
-    // per SIM slot (server 1.2.0+): {"1": {"on": true, "net": "auto"}, "2": {"on": false, "net": "28601"}}
+    // per SIM slot (server 1.2.0+): {"1": {"on": true, "net": "auto", "roam": "auto"}, "2": {...}}
     JsonObject sims = cfg["sims"];
     if (!sims.isNull()) {
       for (uint8_t s = 1; s <= 2; s++) {
@@ -261,6 +261,9 @@ static bool sync() {
         Modem *m = modemFor(s);
         m->setEnabled(o["on"] | true);
         m->setNetwork(o["net"] | "auto");
+        // roaming mode (1.4.0): calls ring instead of being hung up, no SMS goes out
+        const char *roam = o["roam"] | "off";
+        m->roamMode = !strcmp(roam, "on") ? Modem::ROAM_ON : !strcmp(roam, "auto") ? Modem::ROAM_AUTO : Modem::ROAM_OFF;
       }
     }
   }
