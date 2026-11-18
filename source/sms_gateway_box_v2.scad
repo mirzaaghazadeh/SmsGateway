@@ -411,6 +411,13 @@ module m_parts() {
     color("#111") pblock([82.73, 64.73, 92.89, 67.27], pcb_top, 2.5);                                    // OLED header
     color("#333") pblock([82.73, 64.73, 92.89, 67.27], pcb_top + 2.5, 14);                               // + jumpers
     color("#111") pblock([95.53, 36.73, 98.07, 41.81], pcb_top, 8.5);                                    // JP1 + cap
+    // U3: LM1084 (fixed 4.0 V for the SIM800Ls), TO-220 lying flat, plastic down, metal tab up; it
+    // has to stay under the OLED that hangs from the lid. Pins at (44.76, 61.0), 2.54 apart.
+    color("#222") pblock([42.22, 63.6, 52.38, 72.8], pcb_top, 4.5);                                     // plastic
+    color("silver") pblock([42.22, 72.8, 52.38, 79.3], pcb_top + 3.2, 1.3);                              // tab
+    color("#1a3a8a") at([56.6, 72.75], pcb_top) cylinder(d = 6.3, h = 11.5);                             // C3 100 uF
+    color("#c8a26a") for (x = [37.4, 40.4]) at([x, 69.58], pcb_top + 1.25) rotate([90, 0, 0])          // R6, R7
+        cylinder(d = 2.5, h = 6.3, center = true);
     // DC-099 jack: nut against the wall, body + solder lugs
     color("silver") translate([wall, wall + P([0, dc_y])[1], floor_t + dc_z]) rotate([0, 90, 0]) {
         cylinder(d = 16, h = 2.5, $fn = 6);

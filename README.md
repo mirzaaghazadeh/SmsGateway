@@ -13,10 +13,6 @@ printed case.
 
 All case images are rendered from the OpenSCAD source in `source/`.
 
-> **Note:** some pictures in this README show an earlier version of the panel, the case or the
-> PCB, so the latest version can look a little different. The text always describes the latest
-> version.
-
 ## The idea
 
 This is a hobby project. I carried the idea around for about three years before I finally sat
@@ -206,7 +202,7 @@ supports (profile: `case/v1/bambu/SMS case 0.20mm @BBL X2D.json`). Print times o
 |---|---|
 | <img src="case/v2/v2_preview_front.png" alt="Closed v2 case from the front: two SIM card slots, OLED window, vents and engraved port names in the lid" width="400"> | <img src="case/v2/v2_preview_back.png" alt="Closed v2 case from the back: two SMA antenna holes, the 12 V jack hole in the left wall" width="400"> |
 | **Inside** | **X-ray (lid transparent)** |
-| <img src="case/v2/v2_preview_inside.png" alt="Open v2 box with the carrier PCB: ESP32-S3 at the back right, LM2596 modules in the middle, SIM800Ls and capacitors at the front, 12 V jack and antenna sockets at the back left" width="400"> | <img src="case/v2/v2_preview_xray.png" alt="Assembled v2 case with a see-through lid showing the PCB, the modules and the OLED" width="400"> |
+| <img src="case/v2/v2_preview_inside.png" alt="Open v2 box with the carrier PCB: ESP32-S3 at the back right, LM2596 modules in the middle, the LM1084 regulator lying flat between the SIM800Ls, SIM800Ls and capacitors at the front, 12 V jack and antenna sockets at the back left" width="400"> | <img src="case/v2/v2_preview_xray.png" alt="Assembled v2 case with a see-through lid showing the PCB, the modules and the OLED" width="400"> |
 
 Outside size 113.2 x 105.8 x 35 mm + 3.2 mm lid. The PCB clicks onto 4 snap pins in its corner
 holes, and 10 posts underneath keep it flat when you plug the modules in. The SIM cards go in
