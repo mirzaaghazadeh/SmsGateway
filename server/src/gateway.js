@@ -7,6 +7,7 @@ import { analyzeText } from './shared/gsm.js';
 import { emit } from './webhook.js';
 import { updateOffer } from './firmware.js';
 import { ledForDevice } from './led.js';
+import { forwardSms, forwardCall } from './telegram.js';
 
 export const ONLINE_MS = 30_000;
 const JOB_TIMEOUT_MS = 180_000;
@@ -164,7 +165,10 @@ function handleEvent(device, boot, ev, now) {
       const r = db
         .prepare('INSERT OR IGNORE INTO calls (device_id, slot, number, action, ring_ms, ts, ukey) VALUES (?, ?, ?, ?, ?, ?, ?)')
         .run(device, slot, number, ev.action === 'missed' ? 'missed' : 'rejected', int(ev.ring), now, `call:${device}:${boot}:${ev.seq}`);
-      if (r.changes) emit('call.missed', { id: Number(r.lastInsertRowid), device, sim: slot, number, action: ev.action, time: now });
+      if (r.changes) {
+        emit('call.missed', { id: Number(r.lastInsertRowid), device, sim: slot, number, action: ev.action, time: now });
+        toTelegram(() => forwardCall({ device, slot, number, now }), device, slot);
+      }
       return;
     }
     case 'job':
@@ -241,7 +245,18 @@ function saveIncoming({ device, slot, number, text, encoding, parts, time, ukey,
   if (!r.changes) return null;
   const id = Number(r.lastInsertRowid);
   emit('sms.received', { id, device, sim: slot, from: number, text, sms_time: time, received_at: now, parts });
+  // a long SMS gets here once, joined from all its parts, so Telegram gets one message for it
+  toTelegram(() => forwardSms({ device, slot, from: number, text, parts, note, smsTime: time, now }), device, slot);
   return id;
+}
+
+// A Telegram problem must never stop an SMS or call from being saved.
+function toTelegram(fn, device, slot) {
+  try {
+    fn();
+  } catch (e) {
+    log(`Telegram: could not queue a message (${e.message})`, { level: 'warn', device_id: device, slot });
+  }
 }
 
 function jobResult(device, jobId, ok, ev) {

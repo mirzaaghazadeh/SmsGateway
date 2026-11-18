@@ -6,6 +6,7 @@ import { HttpError, sendJson, serveStatic } from './http.js';
 import { adminPassword } from './auth.js';
 import { maintenance } from './gateway.js';
 import { checkReleases } from './firmware.js';
+import { telegramTick } from './telegram.js';
 import { log } from './db.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -69,6 +70,9 @@ setInterval(() => {
     console.error('maintenance', e);
   }
 }, 30_000).unref();
+
+// send Telegram messages that are waiting (new ones go out at once; this picks up retries)
+setInterval(() => telegramTick().catch((e) => console.error('telegram', e)), 5_000).unref();
 
 // look for new firmware releases on GitHub: shortly after start, then every 6 hours
 setTimeout(() => checkReleases(), 5_000).unref();

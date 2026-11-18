@@ -13,8 +13,45 @@ import { gsm7Encode } from '../src/shared/gsm.js';
 const KEYS = { ADMIN_PASSWORD: 'admin-pass', API_KEY: 'api-key' };
 const GW_KEY = 'K7Q2M9XD4TPAW3HZ'; // what the gateway made and shows on its setup page
 let BASE;
-let proc, dir, cookie, fakeGithub;
+let proc, dir, cookie, fakeGithub, fakeTelegram;
 let seq = 0;
+
+// A stand-in for the Telegram Bot API: one valid token, chat "403" has blocked the bot.
+const TG_TOKEN = '123456789:' + 'A'.repeat(35);
+const tgSent = [];
+const tgReply = (res, status, obj) => {
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(obj));
+};
+async function telegramApi(req, res) {
+  let raw = '';
+  for await (const c of req) raw += c;
+  const m = /^\/bot([^/]+)\/(\w+)$/.exec(req.url);
+  if (!m || m[1] !== TG_TOKEN) return tgReply(res, 401, { ok: false, error_code: 401, description: 'Unauthorized' });
+  const b = raw ? JSON.parse(raw) : {};
+  if (m[2] === 'getMe') return tgReply(res, 200, { ok: true, result: { id: 42, is_bot: true, first_name: 'Gateway', username: 'test_gateway_bot' } });
+  if (m[2] === 'getUpdates') {
+    return tgReply(res, 200, { ok: true, result: [
+      { update_id: 1, message: { message_id: 1, chat: { id: 111, type: 'private', first_name: 'Ada' }, text: '/start' } },
+      { update_id: 2, my_chat_member: { chat: { id: -100222, type: 'supergroup', title: 'Codes' } } },
+    ] });
+  }
+  if (m[2] === 'sendMessage') {
+    if (String(b.chat_id) === '403') return tgReply(res, 403, { ok: false, error_code: 403, description: 'Forbidden: bot was blocked by the user' });
+    tgSent.push(b);
+    return tgReply(res, 200, { ok: true, result: { message_id: tgSent.length } });
+  }
+  return tgReply(res, 404, { ok: false, error_code: 404, description: 'Not Found' });
+}
+
+async function waitFor(fn, ms = 4000) {
+  const end = Date.now() + ms;
+  while (!fn()) {
+    if (Date.now() > end) throw new Error('timed out waiting');
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
 
 // A stand-in for the GitHub API with one release that carries a firmware file.
 const FW_BIN = Buffer.concat([Buffer.from([0xe9]), randomBytes(4095)]);
@@ -38,11 +75,14 @@ before(async () => {
     res.end();
   });
   await new Promise((r) => fakeGithub.listen(0, '127.0.0.1', r));
+  fakeTelegram = createServer((req, res) => telegramApi(req, res));
+  await new Promise((r) => fakeTelegram.listen(0, '127.0.0.1', r));
   // port 0: the OS picks a free port, the server prints it
   proc = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'src/server.js'], {
     env: {
       ...process.env, ...KEYS, PORT: '0', DATA_DIR: dir,
       GITHUB_API: `http://127.0.0.1:${fakeGithub.address().port}`, FIRMWARE_REPO: 'test/gateway',
+      TELEGRAM_API: `http://127.0.0.1:${fakeTelegram.address().port}`,
     },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
@@ -65,6 +105,7 @@ before(async () => {
 after(() => {
   proc?.kill();
   fakeGithub?.close();
+  fakeTelegram?.close();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -289,6 +330,55 @@ test('settings and static panel', async () => {
   assert.equal(html.status, 200);
   assert.match(await html.text(), /<html/);
   assert.equal((await fetch(BASE + '/js/gsm.js')).status, 200);
+});
+
+test('Telegram: each SIM line goes to its own chats, a long SMS arrives joined', async () => {
+  assert.equal((await panel('PUT', '/api/telegram', { token: 'not a token' })).status, 400);
+  assert.equal((await panel('PUT', '/api/telegram', { token: '123456789:' + 'B'.repeat(35) })).status, 400); // Telegram refuses it
+  let t = await panel('PUT', '/api/telegram', { token: TG_TOKEN });
+  assert.equal(t.status, 200);
+  assert.equal(t.body.bot.username, 'test_gateway_bot');
+  assert.ok(!JSON.stringify(t.body).includes(TG_TOKEN)); // the token never goes back to the browser
+  assert.deepEqual(t.body.lines.map((l) => `${l.device}:${l.slot}`), ['aabbccddeeff:1', 'aabbccddeeff:2']);
+
+  const chats = await panel('GET', '/api/telegram/chats');
+  assert.deepEqual(chats.body.chats.map((c) => `${c.id} ${c.name}`).sort(), ['-100222 Codes', '111 Ada']);
+
+  assert.equal((await panel('PUT', '/api/telegram', { routes: { 'aabbccddeeff:1': 'hello' } })).status, 400);
+  t = await panel('PUT', '/api/telegram', { routes: { 'aabbccddeeff:1': '111, -100222', 'aabbccddeeff:2': '333' } });
+  assert.deepEqual(t.body.lines.map((l) => l.chats), [['111', '-100222'], ['333']]);
+
+  const check = await panel('POST', '/api/telegram/test', { line: 'aabbccddeeff:1', chats: '111 403' });
+  assert.deepEqual(check.body.results.map((r) => r.ok), [true, false]);
+  assert.match(check.body.results[1].error, /blocked/);
+  tgSent.length = 0;
+
+  // a 3-part SMS on SIM 1: two parts, out of order, in one check-in; the last part later
+  const long = 'A'.repeat(153) + 'B'.repeat(153) + 'C <tag> & done';
+  const parts = [long.slice(0, 153), long.slice(153, 306), long.slice(306)]
+    .map((x, i) => deliver('+905557770000', x, { ref: 9, total: 3, seq: i + 1 }));
+  await device(status([{ seq: ++seq, t: 'sms', slot: 1, pdu: parts[2] }, { seq: ++seq, t: 'sms', slot: 1, pdu: parts[0] }]));
+  // meanwhile SIM 2 gets an SMS and a call
+  await device(status([
+    { seq: ++seq, t: 'sms', slot: 2, pdu: deliver('+905551110000', 'Line two') },
+    { seq: ++seq, t: 'call', slot: 2, num: '+905552220000', action: 'rejected', ring: 1500 },
+  ]));
+  await waitFor(() => tgSent.length >= 2);
+  assert.deepEqual(tgSent.map((m) => m.chat_id), ['333', '333']); // nothing for SIM 1 while a part is missing
+  assert.match(tgSent[0].text, /^📩 <b>\+905551110000<\/b>\n<i>Home · SIM 2( · Sent [^<]+)?<\/i>\n\nLine two$/);
+  assert.equal(tgSent[1].text, '📞 Missed call from <b>+905552220000</b>\n<i>Home · SIM 2</i>');
+
+  await device(status([{ seq: ++seq, t: 'sms', slot: 1, pdu: parts[1] }]));
+  await waitFor(() => tgSent.length >= 4);
+  const sim1 = tgSent.slice(2);
+  assert.deepEqual(sim1.map((m) => m.chat_id).sort(), ['-100222', '111']);
+  for (const m of sim1) {
+    assert.equal(m.parse_mode, 'HTML');
+    assert.match(m.text, /^📩 <b>\+905557770000<\/b>\n<i>Home · SIM 1 · Turkcell · 3 SMS joined( · Sent [^<]+)?<\/i>\n\n/);
+    assert.ok(m.text.endsWith('A'.repeat(153) + 'B'.repeat(153) + 'C &lt;tag&gt; &amp; done'));
+  }
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(tgSent.length, 4); // one Telegram message per chat, not one per SMS part
 });
 
 test('removing a gateway locks it out', async () => {

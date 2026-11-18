@@ -1,23 +1,23 @@
-import { h, clear, icon, api, toast, busy, copy, panel } from '../ui.js';
+import { h, clear, icon, api, toast, busy, copy, panel, plural, simState } from '../ui.js';
 
 export default function settings(page) {
   const body = h('div', { style: { display: 'contents' } }, h('div', { class: 'skeleton' }));
   clear(page,
     h('header', { class: 'page-head' },
-      h('div', {}, h('h1', {}, 'Settings'), h('p', { class: 'sub' }, 'Gateway connection, call handling, webhooks and the API.'))
+      h('div', {}, h('h1', {}, 'Settings'), h('p', { class: 'sub' }, 'Gateway connection, call handling, Telegram, webhooks and the API.'))
     ),
     body
   );
   const load = async () => {
     try {
-      const [st, fw] = await Promise.all([api('/api/settings'), api('/api/firmware')]);
-      draw(st, fw);
+      const [st, fw, tg] = await Promise.all([api('/api/settings'), api('/api/firmware'), api('/api/telegram')]);
+      draw(st, fw, tg);
     } catch (e) {
       toast(e.message, 'bad');
     }
   };
 
-  function draw(st, fw) {
+  function draw(st, fw, tg) {
     clear(body,
       h('div', { class: 'split even' },
         panel('Connect a gateway', null, h('div', { class: 'panel-body form' },
@@ -27,6 +27,7 @@ export default function settings(page) {
         )),
         panel('Incoming calls', null, h('div', { class: 'panel-body form' }, callMode(st)))
       ),
+      telegramPanel(tg, load),
       firmwarePanel(fw, load),
       ledPanel(st, load),
       webhook(st, load),
@@ -38,6 +39,133 @@ export default function settings(page) {
 }
 
 const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+function telegramPanel(tg, reload) {
+  const token = h('input', {
+    class: 'input mono', id: 'tgtoken', type: 'password', autocomplete: 'off', spellcheck: 'false',
+    placeholder: tg.token_set ? `Saved (ends in ${tg.token_hint}). Paste a new token to change it.` : '123456789:AAE…',
+  });
+  const sms = h('input', { type: 'checkbox', checked: tg.sms });
+  const calls = h('input', { type: 'checkbox', checked: tg.calls });
+
+  // one row per line (gateway + SIM slot) with its chat IDs
+  const inputs = new Map();
+  let lastInput = null;
+  const lineName = (l) => `${l.gateway} · SIM ${l.slot}`;
+  const rows = tg.lines.map((l) => {
+    const key = `${l.device}:${l.slot}`;
+    const input = h('input', {
+      class: 'input mono grow', value: l.chats.join(', '), spellcheck: 'false',
+      placeholder: 'Chat IDs, e.g. 123456789', 'aria-label': `Chat IDs for ${lineName(l)}`,
+      onfocus: () => (lastInput = { input, name: lineName(l) }),
+    });
+    inputs.set(key, input);
+    const test = h('button', {
+      class: 'btn', type: 'button', disabled: !tg.token_set,
+      onclick: () => busy(test, async () => {
+        try {
+          const r = await api('/api/telegram/test', { method: 'POST', body: { line: key, chats: input.value } });
+          const bad = r.results.filter((x) => !x.ok);
+          toast(bad.length ? `Not sent to ${bad.map((b) => `${b.chat} (${b.error})`).join(', ')}` : `Test sent to ${plural(r.results.length, 'chat')}`, bad.length ? 'bad' : '');
+        } catch (e) {
+          toast(e.message, 'bad');
+        }
+      }),
+    }, icon('send'), 'Test');
+    const detail = l.operator || (l.state ? simState(l.state)[1] : 'Nothing reported yet');
+    return h('tr', {},
+      h('td', { style: { whiteSpace: 'nowrap' } }, h('b', {}, lineName(l)), h('div', { class: 'hint' }, detail)),
+      h('td', { style: { width: '100%' } }, h('div', { class: 'row' }, input, test)));
+  });
+
+  // chats that wrote to the bot: click one to add it to the line box you clicked last
+  const found = h('div', { class: 'chips' });
+  const find = h('button', {
+    class: 'btn', type: 'button', disabled: !tg.token_set,
+    onclick: () => busy(find, async () => {
+      try {
+        const r = await api('/api/telegram/chats');
+        clear(found, r.chats.length
+          ? r.chats.map((c) => h('button', {
+            class: 'chip', type: 'button', title: 'Add this chat to the line you clicked last',
+            onclick: () => {
+              if (!lastInput) return copy(c.id);
+              const ids = lastInput.input.value.split(/[\s,;]+/).filter(Boolean);
+              if (!ids.includes(c.id)) lastInput.input.value = [...ids, c.id].join(', ');
+              toast(`${c.name} added to ${lastInput.name}. Press Save.`);
+            },
+          }, `${c.name} · ${c.id}`))
+          : h('p', { class: 'hint' }, `No chats yet. Open ${tg.bot ? '@' + tg.bot.username : 'your bot'} in Telegram, press Start (or write in the group), then try again.`));
+      } catch (e) {
+        toast(e.message, 'bad');
+      }
+    }),
+  }, icon('search'), 'Find chats');
+
+  const save = h('button', { class: 'btn primary', type: 'submit' }, 'Save');
+  const remove = tg.token_set ? h('button', {
+    class: 'btn danger', type: 'button',
+    onclick: () => {
+      if (!confirm('Remove the bot? SMS stop going to Telegram. The chat IDs stay saved.')) return;
+      busy(remove, async () => {
+        try {
+          await api('/api/telegram', { method: 'PUT', body: { token: '' } });
+          toast('Telegram bot removed');
+          reload();
+        } catch (e) {
+          toast(e.message, 'bad');
+        }
+      });
+    },
+  }, icon('trash'), 'Remove bot') : null;
+
+  const status = tg.bot
+    ? h('a', { class: 'badge ok', href: `https://t.me/${tg.bot.username}`, target: '_blank', rel: 'noopener' }, `@${tg.bot.username}`)
+    : h('span', { class: 'badge plain' }, 'Not connected');
+
+  return panel('Telegram', status, h('form', {
+    class: 'panel-body form',
+    onsubmit: async (e) => {
+      e.preventDefault();
+      await busy(save, async () => {
+        try {
+          const body = { sms: sms.checked, calls: calls.checked, routes: Object.fromEntries([...inputs].map(([k, i]) => [k, i.value])) };
+          if (token.value.trim()) body.token = token.value.trim();
+          const r = await api('/api/telegram', { method: 'PUT', body });
+          toast(r.bot ? `Saved. Messages go out through @${r.bot.username}.` : 'Saved');
+          reload();
+        } catch (ex) {
+          toast(ex.message, 'bad');
+        }
+      });
+    },
+  },
+    h('p', { class: 'muted' }, 'The server sends each SMS a SIM receives, and its missed calls, to the Telegram chats you choose for that SIM. A long SMS arrives as one message, joined from its parts.'),
+    h('div', { class: 'split even' },
+      h('div', { class: 'form' },
+        h('ol', { class: 'steps small' },
+          h('li', {}, 'In Telegram, open ', h('a', { href: 'https://t.me/BotFather', target: '_blank', rel: 'noopener' }, '@BotFather'), ', send /newbot and follow the steps. Paste the token it gives you below.'),
+          h('li', {}, 'Open your new bot and press Start. For a group, add the bot to the group and write any message there.'),
+          h('li', {}, 'Press Find chats, click a SIM line below, then click a chat to add it. One SIM can go to several chats.')
+        ),
+        h('div', { class: 'field' }, h('label', { for: 'tgtoken' }, 'Bot token'), token)
+      ),
+      h('div', { class: 'form' },
+        h('label', { class: 'radio' }, sms, h('div', {}, h('b', {}, 'Send received SMS'), h('span', {}, 'Every SMS a SIM receives, with the sender and the text.'))),
+        h('label', { class: 'radio' }, calls, h('div', {}, h('b', {}, 'Send missed calls'), h('span', {}, 'Who called which SIM.'))),
+        h('div', { class: 'row' }, find),
+        found
+      )
+    ),
+    tg.lines.length
+      ? h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
+        h('thead', {}, h('tr', {}, h('th', {}, 'SIM line'), h('th', {}, 'Send to these chats'))),
+        h('tbody', {}, rows)))
+      : h('p', { class: 'hint' }, 'The SIM lines show up here once a gateway has checked in.'),
+    tg.waiting ? h('p', { class: 'hint' }, `${plural(tg.waiting, 'message')} waiting to go to Telegram.`) : null,
+    h('div', { class: 'row' }, save, remove)
+  ));
+}
 
 function firmwarePanel(fw, reload) {
   const auto = h('input', { type: 'checkbox', id: 'fwauto', checked: fw.auto });

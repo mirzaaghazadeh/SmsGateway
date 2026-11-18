@@ -7,6 +7,7 @@ import {
 import { webhookSecret, testWebhook, EVENTS } from './webhook.js';
 import { checkReleases, firmwareView, cachedFirmware, readFirmware, newer, maybeCheckReleases } from './firmware.js';
 import { ledSettings, setLedSettings, LED_STATES, LED_MODES } from './led.js';
+import { telegramView, setTelegram, recentChats, testChats, lineLabel } from './telegram.js';
 
 export const router = new Router();
 
@@ -312,6 +313,26 @@ router.put('/api/settings', panel(async (req) => {
 }));
 router.post('/api/settings/api-key', panel((req) => (auth.regenerateApiKey(), settingsView(req))));
 router.post('/api/settings/webhook-test', panel(() => testWebhook()));
+
+// Telegram: one line = one SIM slot of a gateway that has checked in.
+const telegramLines = () =>
+  devicesWithSims().flatMap((g) => [1, 2].map((slot) => {
+    const s = g.sims.find((x) => x.slot === slot);
+    return { device: g.id, slot, gateway: g.name, operator: s?.operator || null, state: s?.state || null, ready: !!s?.ready };
+  }));
+
+router.get('/api/telegram', panel(() => telegramView(telegramLines())));
+router.put('/api/telegram', panel(async (req) => {
+  await setTelegram(await readJson(req));
+  return telegramView(telegramLines());
+}));
+router.get('/api/telegram/chats', panel(() => recentChats()));
+router.post('/api/telegram/test', panel(async (req) => {
+  const b = await readJson(req);
+  const [device, slot] = String(b.line || '').split(':');
+  const known = device && telegramLines().some((l) => l.device === device && String(l.slot) === slot);
+  return testChats(b.chats, known ? lineLabel(device, Number(slot)) : 'test');
+}));
 
 // ---------- public API (API key) ----------
 

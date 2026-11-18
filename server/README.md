@@ -24,6 +24,8 @@ panel with hand-drawn SVG charts. One container, one SQLite file.
   (Persian, Turkish, emoji), and long SMS split into parts and joined again.
 - **Queue**: outgoing SMS wait until a SIM is ready. A failed send is retried 3 times. With "Any SIM",
   the SIM that sent the fewest messages today is used.
+- **Telegram**: the server sends each received SMS and missed call to Telegram chats you choose per SIM
+  (see below).
 - **API** for your own apps and **webhooks** for every event (see below).
 
 ## Deploy on Coolify
@@ -76,6 +78,31 @@ The image has a health check on `GET /health`.
 - **Status light**: Settings → Status light sets a color and a pattern (steady, breathing, blinks, short
   flash, off) for each gateway state, plus the brightness. The gateway gets them on its next check-in
   and saves them, so they also work while Wi-Fi is down.
+
+## Telegram
+
+The server (not the gateway) sends each SMS a SIM receives, and each missed call, to Telegram. Every
+SIM is a "line" with its own list of chats: SIM 1 can go to you, SIM 2 to a team group, or both to
+several chats.
+
+1. In Telegram, open **@BotFather**, send `/newbot` and follow the steps. It gives you a token like
+   `123456789:AAE…`.
+2. In the panel, open **Settings → Telegram** and paste the token.
+3. Open your bot in Telegram and press **Start**. For a group, add the bot to the group and write any
+   message there.
+4. Press **Find chats**, click the box of a SIM line, then click a chat to add it. **Test** sends a
+   test message to the chats of that line. **Save**.
+
+- A long SMS comes in as several parts. The server waits for all of them and sends one Telegram
+  message with the whole text. If a part never arrives, the rest goes out after 30 minutes, marked
+  with how many parts are missing.
+- Text longer than one Telegram message (4096 characters) is split, and each piece is numbered.
+- Messages wait on the server until Telegram takes them, so they are not lost when Telegram or the
+  server is down for a while (kept up to 24 hours).
+- Chat IDs are numbers: people have positive ones, groups negative ones like `-1001234567890`. A
+  public channel can also be given as `@name`; add the bot as an admin of the channel.
+- Telegram sees the text of the messages you forward. Leave a SIM line empty to keep its SMS off
+  Telegram.
 
 ## Run it locally
 
@@ -155,4 +182,6 @@ or stop the container first.
 | `src/db.js` | SQLite schema and settings |
 | `src/auth.js` | Panel login, gateway keys (add, check, tie to one board), API key |
 | `src/webhook.js` | Signed webhooks with retries |
+| `src/telegram.js` | Telegram bot: lines and their chats, the send queue, finding chat IDs |
+| `src/tgformat.js` | Telegram message text: layout, escaping, splitting long text |
 | `public/` | The panel: `index.html`, `app.css`, `js/` |

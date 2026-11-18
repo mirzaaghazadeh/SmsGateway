@@ -4,6 +4,12 @@ Versions are the gateway firmware versions (`FW_VERSION` in `firmware/sms_gatewa
 is a GitHub release tagged `vX.Y.Z` with the firmware files. Server changes ship with the version they
 were made for; the server deploys from `main`.
 
+## Unreleased
+
+- Server: Telegram. Add a bot under Settings → Telegram and choose, for each SIM, the chats that get
+  its SMS and missed calls (several chats per SIM are fine). A long SMS arrives as one Telegram
+  message, joined from its parts. The server sends them, so the gateway firmware does not change.
+
 ## 1.1.2
 
 - Fix: updates over Wi-Fi failed with "download has the wrong size" when the server sits behind

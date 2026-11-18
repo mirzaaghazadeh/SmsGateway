@@ -90,6 +90,12 @@ CREATE TABLE IF NOT EXISTS logs (
   id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, device_id TEXT, slot INTEGER, level TEXT, text TEXT, ukey TEXT UNIQUE
 );
 CREATE INDEX IF NOT EXISTS logs_ts ON logs (ts);
+
+-- Telegram messages waiting to be sent (deleted once Telegram has them, or after 24 h).
+CREATE TABLE IF NOT EXISTS telegram_outbox (
+  id INTEGER PRIMARY KEY, chat_id TEXT NOT NULL, text TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0, next_at INTEGER NOT NULL, created_at INTEGER NOT NULL
+);
 `);
 
 // Columns added after the first release: add them to databases made by older versions.
