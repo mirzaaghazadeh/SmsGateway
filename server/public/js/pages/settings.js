@@ -54,6 +54,15 @@ function telegramPanel(tg, reload) {
     class: 'input', type: 'number', min: 0, max: 120, value: String(tg.alert_minutes),
     style: { width: '76px', display: 'inline-block', padding: '4px 8px', margin: '0 4px' }, 'aria-label': 'Minutes without network before the alert',
   });
+  // Telegram lets a bot delete its own messages only during the first 48 hours
+  const autodelete = h('select', { class: 'select', id: 'tgdelete', style: { maxWidth: '260px' } },
+    [[0, 'Never'], [60, '1 hour'], [360, '6 hours'], [720, '12 hours'], [1440, '1 day'], [2820, '2 days (the longest Telegram allows)']]
+      .map(([v, label]) => h('option', { value: String(v) }, label)));
+  autodelete.value = String(tg.autodelete || 0);
+  if (autodelete.value !== String(tg.autodelete || 0)) { // saved through the API with another value
+    autodelete.append(h('option', { value: String(tg.autodelete) }, `${tg.autodelete} minutes`));
+    autodelete.value = String(tg.autodelete);
+  }
 
   // one row per line (gateway + SIM slot) with its chat IDs
   const inputs = new Map();
@@ -151,6 +160,7 @@ function telegramPanel(tg, reload) {
           const body = {
             sms: sms.checked, calls: calls.checked, send: sendOn.checked,
             alert_device: alertDevice.checked, alert_signal: alertSignal.checked, alert_minutes: Number(minutes.value),
+            autodelete: Number(autodelete.value),
             routes: Object.fromEntries([...inputs].map(([k, i]) => [k, i.value])),
             modes: Object.fromEntries([...modeInputs].map(([k, s]) => [k, s.value])),
             skip_senders: skipSenders.value, skip_words: skipWords.value,
@@ -187,6 +197,10 @@ function telegramPanel(tg, reload) {
           h('span', {}, 'When the gateway stops checking in (no power or Wi-Fi), and when it is back. Goes to every chat of its SIMs.'))),
         h('label', { class: 'radio' }, alertSignal, h('div', {}, h('b', {}, 'Alert: SIM lost the network'),
           h('span', {}, 'When a SIM has had no network for', minutes, 'minutes, and when it is back. Short drops send nothing.'))),
+        h('div', { class: 'field' }, h('label', { for: 'tgdelete' }, 'Delete the bot\'s messages after'), autodelete,
+          h('p', { class: 'hint' }, 'Forwarded SMS, calls, alerts and answers disappear from Telegram by themselves (they stay in the panel). ',
+            'Telegram lets a bot delete its messages only during the first 2 days. For a week or a month, set Telegram\'s own timer for the chat: ',
+            'open the chat (or group) info, then the ⋮ or More menu, Auto-Delete, 1 week.')),
         h('div', { class: 'row' }, find),
         found
       )

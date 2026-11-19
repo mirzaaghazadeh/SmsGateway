@@ -127,7 +127,7 @@ pick-and-place file, assembly drawing and order specs. For bare boards, upload
 | v2 PCB | Designed, design check clean (clearances, connections), order files ready. Updated after the first build with a fixed 4.0 V regulator for the SIM800Ls. **Not yet ordered or built** |
 | v2 case | Designed, collision-checked against models of the boards. **Not yet printed** |
 | Firmware | Runs on real hardware: setup hotspot, pairing, server sync, updates over Wi-Fi, a SIM800L registered on the network. Bench-test sketch included |
-| Server | Web panel, HTTP API, webhooks, Telegram, firmware updates from GitHub releases, 44 passing tests. Runs with a real gateway |
+| Server | Web panel, HTTP API, webhooks, Telegram, firmware updates from GitHub releases, 45 passing tests. Runs with a real gateway |
 
 ## Repository layout
 
@@ -353,7 +353,8 @@ the chats that get its SMS and missed calls, all of them or only one-time codes.
 arrives as one message, joined from its parts. Reply to an SMS to answer it from the same SIM, or
 send `/send +15551234567 text`. Send `/stats` for the status of every gateway and SIM, `/balance`
 for the balance, and turn on alerts for a gateway that goes offline or a SIM that loses the
-network. The server does all of this; the gateway does not talk to Telegram. Details in
+network. The bot can delete its own messages after 1 hour to 2 days (the most Telegram allows a
+bot). The server does all of this; the gateway does not talk to Telegram. Details in
 [server/README.md](server/README.md#telegram).
 
 ## Contributing

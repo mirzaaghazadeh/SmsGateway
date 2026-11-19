@@ -46,8 +46,46 @@ async function callApi(tok, method, body, timeout = 15_000) {
   return { ok: false, status: r.status, description: data.description || `HTTP ${r.status}`, parameters: data.parameters || {} };
 }
 
-const send = (tok, chat, text) =>
-  callApi(tok, 'sendMessage', { chat_id: chat, text, parse_mode: 'HTML', link_preview_options: { is_disabled: true } });
+// Every message the bot sends is noted, so auto-delete can remove it again.
+async function send(tok, chat, text) {
+  const r = await callApi(tok, 'sendMessage', { chat_id: chat, text, parse_mode: 'HTML', link_preview_options: { is_disabled: true } });
+  if (r.ok && r.result?.message_id) {
+    db.prepare('INSERT OR IGNORE INTO telegram_msgs (chat_id, message_id, sent_at) VALUES (?, ?, ?)')
+      .run(String(r.result.chat?.id ?? chat), r.result.message_id, Date.now());
+  }
+  return r;
+}
+
+// ---------- auto-delete ----------
+
+// Telegram lets a bot delete its own message only during the first 48 hours after sending it, so
+// the longest choice is 47 hours. Longer (a week, a month): the chat's own auto-delete timer in
+// Telegram, which only the people in the chat can set.
+export const DELETE_MAX_MIN = 47 * 60;
+const autoDeleteMinutes = () => Math.min(DELETE_MAX_MIN, Math.max(0, Math.round(Number(setting('telegram_autodelete', '0'))) || 0));
+let lastDeletePass = 0;
+
+async function deleteOldMessages(tok, now, force = false) {
+  if (!force && now - lastDeletePass < 60_000) return;
+  lastDeletePass = now;
+  db.prepare('DELETE FROM telegram_msgs WHERE sent_at < ?').run(now - 48 * 3600_000); // too old to delete
+  const minutes = autoDeleteMinutes();
+  if (!minutes) return;
+  const due = db.prepare('SELECT chat_id, message_id FROM telegram_msgs WHERE sent_at <= ? ORDER BY chat_id, message_id LIMIT 1000')
+    .all(now - minutes * 60_000);
+  const byChat = new Map();
+  for (const m of due) byChat.set(m.chat_id, [...(byChat.get(m.chat_id) || []), m.message_id]);
+  const forget = db.prepare('DELETE FROM telegram_msgs WHERE chat_id = ? AND message_id = ?');
+  for (const [chat, ids] of byChat) {
+    for (let i = 0; i < ids.length; i += 100) { // deleteMessages takes up to 100 at a time
+      const part = ids.slice(i, i + 100);
+      const r = await callApi(tok, 'deleteMessages', { chat_id: chat, message_ids: part });
+      if (r.network || r.status === 429 || r.status >= 500) return; // try again at the next pass
+      if (!r.ok) warnOnce(chat, `Telegram: could not delete old messages in chat ${chat}: ${r.description}`, now);
+      for (const id of part) forget.run(chat, id); // gone, or Telegram will never delete it
+    }
+  }
+}
 
 // ---------- lines ----------
 
@@ -367,6 +405,7 @@ export async function telegramTick() {
       }
       db.prepare('DELETE FROM telegram_outbox WHERE created_at < ?').run(now - KEEP_MS);
       db.prepare('DELETE FROM telegram_sent WHERE created_at < ?').run(now - 30 * 86400_000);
+      await deleteOldMessages(tok, now); // once a minute
       const heads = db
         .prepare(
           `SELECT o.* FROM telegram_outbox o
@@ -419,6 +458,7 @@ function moveChat(from, to) {
   setSetting('telegram_routes', JSON.stringify(all));
   db.prepare('UPDATE telegram_outbox SET chat_id = ? WHERE chat_id = ?').run(to, from);
   db.prepare('DELETE FROM telegram_sent WHERE chat_id = ?').run(from); // message IDs start again in the new group
+  db.prepare('DELETE FROM telegram_msgs WHERE chat_id = ?').run(from);
   log(`Telegram: group ${from} became supergroup ${to}; the chat ID was updated`);
 }
 
@@ -441,6 +481,7 @@ export function telegramView(lines) {
     alert_device: enabled('telegram_alert_device'),
     alert_signal: enabled('telegram_alert_signal'),
     alert_minutes: alertMinutes(),
+    autodelete: autoDeleteMinutes(), // minutes, 0 = never
     problem: tok ? pollError : null,
   };
 }
@@ -473,6 +514,7 @@ export async function setTelegram(b) {
       if (t !== token()) { // another bot: start reading its messages from the beginning
         setSetting('telegram_offset', '0');
         setSetting('telegram_seen', '[]');
+        db.prepare('DELETE FROM telegram_msgs').run(); // the old bot's messages: this one cannot delete them
       }
       setSetting('telegram_token', t);
       setSetting('telegram_bot', JSON.stringify({ id: me.result.id, username: me.result.username, name: me.result.first_name }));
@@ -495,6 +537,15 @@ export async function setTelegram(b) {
     const m = Number(b.alert_minutes);
     if (!Number.isInteger(m) || m < 0 || m > 120) throw new HttpError(400, 'Minutes go from 0 to 120');
     setSetting('telegram_alert_minutes', m);
+  }
+  if (b.autodelete !== undefined) {
+    const m = Number(b.autodelete);
+    if (!Number.isInteger(m) || m < 0 || m > DELETE_MAX_MIN) {
+      throw new HttpError(400, 'Telegram lets a bot delete its messages only within 48 hours: choose up to 2 days, or use the auto-delete timer of the chat in Telegram');
+    }
+    setSetting('telegram_autodelete', m);
+    const tok = token();
+    if (tok && m) deleteOldMessages(tok, Date.now(), true).catch(() => {}); // what is already old goes now
   }
   if (b.routes !== undefined) setSetting('telegram_routes', JSON.stringify(cleanRoutes(b.routes)));
   if (b.modes !== undefined) {

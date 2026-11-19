@@ -139,6 +139,11 @@ several chats.
 - Text longer than one Telegram message (4096 characters) is split, and each piece is numbered.
 - Messages wait on the server until Telegram takes them, so they are not lost when Telegram or the
   server is down for a while (kept up to 24 hours).
+- **Auto-delete**: "Delete the bot's messages after" (1 hour to 2 days) removes everything the bot
+  sent from the chats once it is that old; the panel keeps it all. Telegram lets a bot delete a
+  message only during the first 48 hours, so 2 days is the most. For a week or a month, set the
+  chat's own Auto-Delete timer in Telegram (chat or group info → menu → Auto-Delete); the bot
+  cannot set that timer itself.
 - Chat IDs are numbers: people have positive ones, groups negative ones like `-1001234567890`. A
   public channel can also be given as `@name`; add the bot as an admin of the channel.
 - Telegram sees the text of the messages you forward. Leave a SIM line empty to keep its SMS off

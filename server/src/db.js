@@ -97,6 +97,12 @@ CREATE TABLE IF NOT EXISTS telegram_outbox (
   attempts INTEGER NOT NULL DEFAULT 0, next_at INTEGER NOT NULL, created_at INTEGER NOT NULL
 );
 
+-- What the bot sent, so it can delete it again (Settings → Telegram → auto-delete). Kept 48 hours:
+-- Telegram lets a bot delete its own message only during the first 48 hours.
+CREATE TABLE IF NOT EXISTS telegram_msgs (
+  chat_id TEXT NOT NULL, message_id INTEGER NOT NULL, sent_at INTEGER NOT NULL, PRIMARY KEY (chat_id, message_id)
+);
+
 -- Which Telegram message carried which SMS, so a reply in Telegram goes back to the sender (30 days).
 CREATE TABLE IF NOT EXISTS telegram_sent (
   chat_id TEXT NOT NULL, message_id INTEGER NOT NULL, device_id TEXT, slot INTEGER, number TEXT,

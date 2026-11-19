@@ -4,6 +4,14 @@ Versions are the gateway firmware versions (`FW_VERSION` in `firmware/sms_gatewa
 is a GitHub release tagged `vX.Y.Z` with the firmware files. Server changes ship with the version they
 were made for; the server deploys from `main`.
 
+## Unreleased
+
+- Telegram auto-delete (Settings → Telegram): the bot deletes its own messages (forwarded SMS,
+  calls, alerts, answers) after 1 hour to 2 days; they stay in the panel. Telegram lets a bot
+  delete a message only during the first 48 hours, so for a week or a month use the chat's own
+  Auto-Delete timer in Telegram. Server only, works with every firmware.
+- The v2 case pictures show the LM1084 regulator of the current PCB.
+
 ## 1.4.0
 
 - Roaming mode for each SIM (Devices → SIM cards): for a SIM from another country, where hanging

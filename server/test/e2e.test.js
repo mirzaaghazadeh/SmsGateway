@@ -7,6 +7,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { decodePdu, pack7 } from '../src/pdu.js';
 import { gsm7Encode } from '../src/shared/gsm.js';
 
@@ -22,6 +23,7 @@ let seq = 0;
 const TG_TOKEN = '123456789:' + 'A'.repeat(35);
 const tgSent = [];
 let tgMsgSeq = 100; // message IDs of what the bot sent, never reused
+const tgDeleted = new Set(); // "<chat>:<message id>" the bot deleted
 // what people "send to the bot"; the server reads them with getUpdates
 const tgUpdates = [
   { update_id: 1, message: { message_id: 1, chat: { id: 111, type: 'private', first_name: 'Ada' }, text: 'hello' } },
@@ -45,6 +47,10 @@ async function telegramApi(req, res) {
     return tgReply(res, 200, { ok: true, result: fresh() });
   }
   if (m[2] === 'setMyCommands') return tgReply(res, 200, { ok: true, result: true });
+  if (m[2] === 'deleteMessages') {
+    for (const id of b.message_ids) tgDeleted.add(`${b.chat_id}:${id}`);
+    return tgReply(res, 200, { ok: true, result: true });
+  }
   if (m[2] === 'sendMessage') {
     if (String(b.chat_id) === '403') return tgReply(res, 403, { ok: false, error_code: 403, description: 'Forbidden: bot was blocked by the user' });
     const message_id = ++tgMsgSeq;
@@ -514,6 +520,31 @@ test('Telegram: a reply answers the SMS from the same SIM, /send sends a new one
   say('/send +15556660000 again');
   await answer(/turned off in the panel/);
   await panel('PUT', '/api/telegram', { send: true });
+});
+
+test('Telegram auto-delete: the bot deletes its own messages after the chosen time, at most 47 hours', async () => {
+  assert.equal((await panel('PUT', '/api/telegram', { autodelete: 7 * 24 * 60 })).status, 400); // Telegram: 48 h at most
+  tgSent.length = 0;
+  await device(status([{ seq: ++seq, t: 'sms', slot: 1, pdu: deliver('+15556667777', 'Delete me later') }]));
+  await waitFor(() => tgSent.length >= 2);
+  const old = tgSent.map((m) => `${m.chat_id}:${m.message_id}`);
+  // the test cannot wait an hour: make everything sent so far 2 hours old
+  const db = new DatabaseSync(join(dir, 'gateway.db'));
+  db.exec('PRAGMA busy_timeout = 5000');
+  db.prepare('UPDATE telegram_msgs SET sent_at = sent_at - ?').run(2 * 3600_000);
+  db.close();
+
+  tgSent.length = 0;
+  await device(status([{ seq: ++seq, t: 'sms', slot: 1, pdu: deliver('+15556667777', 'Fresh one') }]));
+  await waitFor(() => tgSent.length >= 2);
+  const fresh = tgSent.map((m) => `${m.chat_id}:${m.message_id}`);
+
+  const t = await panel('PUT', '/api/telegram', { autodelete: 60 }); // 1 hour
+  assert.equal(t.body.autodelete, 60);
+  await waitFor(() => old.every((k) => tgDeleted.has(k)));
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(fresh.every((k) => !tgDeleted.has(k))); // younger than an hour: stays
+  await panel('PUT', '/api/telegram', { autodelete: 0 });
 });
 
 test('Telegram filters: only codes on a line, senders and words that are not forwarded', async () => {
