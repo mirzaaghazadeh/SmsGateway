@@ -4,8 +4,22 @@ Versions are the gateway firmware versions (`FW_VERSION` in `firmware/sms_gatewa
 is a GitHub release tagged `vX.Y.Z` with the firmware files. Server changes ship with the version they
 were made for; the server deploys from `main`.
 
-## Unreleased
+## 1.5.0
 
+- Saved Wi-Fi networks: the gateway keeps up to 5 and joins whichever is in range (the strongest
+  one), so it moves between home, office or a phone hotspot by itself. Add or remove them on the
+  setup page, or remotely in the panel (Devices → Wi-Fi networks): add the Wi-Fi of the new place
+  before you move the gateway. The panel sends the password to the gateway and then erases it
+  from the server. The Wi-Fi saved by older firmware becomes the first network on the list.
+- No hotspot once the gateway is set up: it no longer opens by itself when Wi-Fi is gone, so nobody
+  nearby can join it and change the settings. The panel button is now **Open settings page**: the
+  page opens for 10 minutes at the gateway's address on its own Wi-Fi (only devices on that Wi-Fi
+  reach it; the whole device key is not shown and cannot be changed there). Pressing BOOT briefly
+  opens the page too, as the hotspot when there is no Wi-Fi (after a move). Holding BOOT 5 s still
+  erases the settings.
+- Fix: the setup page stayed on "Searching for networks…" when the saved Wi-Fi was out of range
+  (the gateway's own join attempts blocked the scan). "Other network…" is also there from the
+  start, to type a name by hand.
 - Telegram auto-delete (Settings → Telegram): the bot deletes its own messages (forwarded SMS,
   calls, alerts, answers) after 1 hour to 2 days; they stay in the panel. Telegram lets a bot
   delete a message only during the first 48 hours, so for a week or a month use the chat's own

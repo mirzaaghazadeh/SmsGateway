@@ -14,6 +14,8 @@ panel with hand-drawn SVG charts. One container, one SQLite file.
   - Signal charts: mobile signal, Wi-Fi, SIM800L supply voltage.
   - Analytics: per day, per SIM, top senders and callers.
   - Devices: add a gateway by its key, restart it or one SIM800L, an AT command console, the event log.
+    Wi-Fi networks (firmware 1.5.0): the gateway's saved networks (names only); add one (sent to the
+    gateway once, then the password is erased from the server) or remove one.
     SIM cards: a name per slot, turn an empty slot off, choose the mobile network (automatic or
     one picked from a search; needs firmware 1.2.0), the balance and a keep-alive SMS (see below).
   - Settings.

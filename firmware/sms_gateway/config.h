@@ -3,7 +3,7 @@
 
 // Firmware version (semver). A GitHub release tagged v<FW_VERSION> carries the build; gateways
 // with an older version install it by themselves. Bump it for every release (see AGENTS.md).
-#define FW_VERSION "1.4.0"
+#define FW_VERSION "1.5.0"
 
 // ---- pins (same as ASSEMBLY.md) ----
 // SIM800L 1
@@ -27,7 +27,8 @@
 // ---- behaviour ----
 #define SIM_BAUD 9600                       // SIM800L UART speed (it adapts to the first "AT")
 #define AP_PASSWORD "smsgateway"            // password of the setup hotspot (8+ characters)
-#define WIFI_FALLBACK_MS (3UL * 60 * 1000)  // no Wi-Fi for this long: open the setup hotspot as well
+#define WIFI_FALLBACK_MS (3UL * 60 * 1000)  // no Wi-Fi for this long: say how to open the setup hotspot
+#define SETUP_PRESS_MS 2000                  // BOOT pressed shorter than this: open the setup page
 #define SYNC_INTERVAL_MS 5000               // check in with the server (the server can change it)
 #define JOB_QUEUE_MAX 3                     // SMS / AT jobs waiting per SIM800L
 

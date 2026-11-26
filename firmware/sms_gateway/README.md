@@ -40,16 +40,29 @@ The program for the YD-ESP32-S3 inside the box. It:
 
 ## Change the Wi-Fi or server later
 
+- **Several Wi-Fi networks** (firmware 1.5.0): the gateway keeps up to 5 and joins whichever is in
+  range, the strongest first. Each network you save on the setup page is added to the list; the
+  page lists them and can remove one. From the panel: Devices → **Wi-Fi networks**, where you can
+  add the Wi-Fi of the next place before you move the gateway there (the password goes to the
+  gateway and is then erased from the server).
+- **No hotspot once set up** (firmware 1.5.0): after the first setup the gateway never opens its
+  hotspot by itself, so nobody nearby can join it and change the settings. The ways in:
+  - **From the panel**: Devices → **Open settings page**. The page opens for 10 minutes at the
+    gateway's address on its own Wi-Fi (shown in the panel, e.g. `http://192.168.1.40`), so only
+    devices on that Wi-Fi reach it. It does not show the whole device key and cannot make a new one.
+  - **Press BOOT briefly** (less than 2 s): the same page for 10 minutes, at the Wi-Fi address if
+    the gateway is on Wi-Fi (the OLED shows it), else as the `SMS-Gateway-XXXX` hotspot. This is the
+    way in after a move to a place whose Wi-Fi it does not know.
 - **Hold BOOT for 5 seconds** (the button next to RST on the ESP32). The OLED counts down; let go
   to cancel. It erases Wi-Fi and server settings and opens the setup hotspot again. The device key
   stays, so you don't have to add the gateway again.
   - Giving the gateway to someone else? On the setup page, Advanced → **Make a new device key**.
   - The RST button only restarts the chip; the program never sees it.
   - Holding BOOT *while pressing* RST puts the ESP32 into USB flash mode instead.
-- **From the panel**: Devices → Open Wi-Fi setup. The hotspot opens while the gateway stays online.
-  It closes by itself after 10 minutes without visitors.
-- **Wi-Fi gone**: if the saved Wi-Fi is missing for 3 minutes (new router, moved house), the hotspot
-  opens by itself. The gateway keeps retrying the old network in the meantime.
+- **Older firmware** (before 1.5.0): Devices → Open Wi-Fi setup opens the hotspot, and the hotspot
+  also opens by itself when the saved Wi-Fi is gone for 3 minutes.
+- **Wi-Fi gone**: the gateway keeps looking for its saved networks (not while someone uses the
+  setup page: that would stop the page's network scan). The OLED says "BOOT short: setup".
 
 ## What the lights and screen mean
 

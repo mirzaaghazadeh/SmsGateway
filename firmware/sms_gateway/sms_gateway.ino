@@ -9,10 +9,13 @@
   Then it checks in with the server every 5 s: status of both SIMs, received SMS (raw PDU),
   missed calls; it gets back SMS to send and commands. All SMS encoding happens on the server.
 
-  Hold the BOOT button for 5 s at any time: Wi-Fi and server settings are erased and the setup
-  hotspot opens again; the device key stays. (RST only restarts; BOOT held while pressing RST
-  starts the USB flash mode.)
-  If the saved Wi-Fi is gone for 3 minutes, the hotspot opens as well, and keeps retrying.
+  Once set up, the hotspot never opens by itself (1.5.0), so nobody nearby can change the settings:
+  - press BOOT briefly: the settings page opens for 10 minutes, at the gateway's address on its
+    Wi-Fi if Wi-Fi works, else as the hotspot;
+  - the panel (Devices → Open settings page) opens it on the Wi-Fi address only;
+  - hold BOOT for 5 s: Wi-Fi and server settings are erased and the setup hotspot opens again; the
+    device key stays. (RST only restarts; BOOT held while pressing RST starts the USB flash mode.)
+  It remembers up to 5 Wi-Fi networks (1.5.0) and joins whichever is in range.
 
   Arduino IDE: board "ESP32S3 Dev Module", Flash Size 16MB, Partition Scheme
   "16M Flash (3MB APP/9.9MB FATFS)", PSRAM "OPI PSRAM". Upload through the USB-C port marked COM.
@@ -56,11 +59,21 @@ String resetReason() {
 
 // ---------------- BOOT button: hold 5 s = factory reset ----------------
 
+static bool wifiUp();
+
+// Open the setup page by hand: on the Wi-Fi address if Wi-Fi works, else the hotspot (10 minutes).
+static void openSetup() {
+  if (wifiUp()) portal::startLan();
+  else portal::start(true);
+}
+
 static void checkBootButton() {
   static uint32_t pressedAt = 0;
+  static uint32_t lastHeld = 0;
   if (digitalRead(BOOT_PIN) == LOW) {
     if (!pressedAt) pressedAt = millis();
     uint32_t held = millis() - pressedAt;
+    lastHeld = held;
     factoryHeld = true;
     display::factoryCountdown(held ? held : 1);
     if (held >= FACTORY_HOLD_MS) {
@@ -76,29 +89,92 @@ static void checkBootButton() {
     pressedAt = 0;
     factoryHeld = false;
     display::factoryCountdown(0);
+    // pressed briefly (1.5.0): open the setup page. This is how to reach it once the gateway is set
+    // up: it never opens the hotspot by itself, so nobody nearby can change its settings.
+    if (lastHeld >= 50 && lastHeld < SETUP_PRESS_MS && settings.configured()) openSetup();
   }
 }
 
-// ---------------- Wi-Fi ----------------
+// ---------------- Wi-Fi: join whichever saved network is in range ----------------
+
+static const uint32_t WIFI_TRY_MS = 20000;  // time for one join attempt before scanning again
+static uint32_t wifiTryAt = 0;
+static size_t wifiNext = 0;     // none of the saved networks seen: try them in turn (hidden networks)
+static bool wifiScanning = false;
+static uint32_t wifiScanAt = 0;  // join attempt stopped: the scan starts a moment later
+
+static void joinNet(const WifiNet &n) {
+  wifiTryAt = millis();
+  WiFi.disconnect(false, false);
+  WiFi.begin(n.ssid.c_str(), n.pass.c_str());
+  Serial.printf("Wi-Fi: joining \"%s\"\n", n.ssid.c_str());
+}
 
 static void startWifi() {
   WiFi.mode(WIFI_STA);
   WiFi.setHostname("sms-gateway");
-  WiFi.setAutoReconnect(true);
+  // findWifi() reconnects (to the best saved network). The core's own retries would keep the radio
+  // "connecting" to a network that is gone, and the ESP32 cannot scan meanwhile.
+  WiFi.setAutoReconnect(false);
   WiFi.setSleep(false);  // faster answers; the gateway is mains powered anyway
-  WiFi.begin(settings.ssid.c_str(), settings.pass.c_str());
-  Serial.printf("Wi-Fi: joining \"%s\"\n", settings.ssid.c_str());
+  joinNet(settings.nets[0]);  // the one that worked last
 }
 
 // Joined the Wi-Fi AND got an address from the router. WiFi.isConnected() turns true a moment
 // before DHCP answers; a server sync in that moment fails its DNS lookup.
 static bool wifiUp() { return WiFi.isConnected() && WiFi.localIP() != IPAddress(0, 0, 0, 0); }
 
+// Not connected: give each attempt 20 s, then scan and join the strongest saved network in range.
+// A join attempt blocks the ESP32's network scan, so while someone uses the setup page the gateway
+// leaves the radio to it.
+static void findWifi(uint32_t now) {
+  if (portal::busy()) {
+    wifiScanning = false;
+    wifiScanAt = 0;
+    return;
+  }
+  if (!wifiScanning) {
+    if (now - wifiTryAt < WIFI_TRY_MS) return;
+    if (!wifiScanAt) {
+      WiFi.disconnect(false, false);  // stop retrying: a scan fails while a join attempt runs
+      wifiScanAt = now + 1500;
+      return;
+    }
+    if ((int32_t)(now - wifiScanAt) < 0) return;
+    wifiScanAt = 0;
+    wifiScanning = WiFi.scanNetworks(true) != WIFI_SCAN_FAILED;
+    if (wifiScanning) return;
+  }
+  int n = wifiScanning ? WiFi.scanComplete() : WIFI_SCAN_FAILED;
+  if (n == WIFI_SCAN_RUNNING) return;
+  wifiScanning = false;
+  const WifiNet *best = nullptr;
+  int bestRssi = -1000;
+  for (int i = 0; i < n; i++) {
+    const WifiNet *k = settings.findNet(WiFi.SSID(i));
+    if (k && WiFi.RSSI(i) > bestRssi) {
+      best = k;
+      bestRssi = WiFi.RSSI(i);
+    }
+  }
+  if (n >= 0) WiFi.scanDelete();
+  if (best) {
+    Serial.printf("Wi-Fi: \"%s\" is in range (%d dBm)\n", best->ssid.c_str(), bestRssi);
+    joinNet(*best);
+  } else {
+    joinNet(settings.nets[wifiNext++ % settings.nets.size()]);  // maybe hidden: try anyway
+  }
+}
+
 static void watchWifi() {
   uint32_t now = millis();
   if (wifiUp()) {
-    if (wifiLostSince) Serial.printf("Wi-Fi: connected, address %s\n", WiFi.localIP().toString().c_str());
+    if (!wifiOkSince) {
+      Serial.printf("Wi-Fi: connected to \"%s\", address %s\n", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
+      settings.useFirst(WiFi.SSID());  // try this one first after a restart
+    }
     wifiLostSince = 0;
+    wifiScanning = false;
     if (!wifiOkSince) wifiOkSince = now;
     // the hotspot was opened because Wi-Fi was gone: close it again once Wi-Fi is back and nobody uses it
     if (portal::active() && WiFi.softAPgetStationNum() == 0 && now - wifiOkSince > 60000) portal::stop();
@@ -106,9 +182,13 @@ static void watchWifi() {
   }
   wifiOkSince = 0;
   if (!wifiLostSince) wifiLostSince = now;
-  if (!portal::active() && now - wifiLostSince > WIFI_FALLBACK_MS) {
-    Serial.println("Wi-Fi: not found for 3 minutes, opening the setup hotspot too");
-    portal::start(false);
+  findWifi(now);
+  // Once set up, the hotspot never opens by itself (1.5.0): anyone nearby could change the settings.
+  // Press BOOT briefly to open it.
+  static uint32_t hinted = 0;
+  if (now - wifiLostSince > WIFI_FALLBACK_MS && now - hinted > WIFI_FALLBACK_MS) {
+    hinted = now;
+    Serial.println("Wi-Fi: no saved network found. Press BOOT briefly to open the setup hotspot.");
   }
 }
 
@@ -142,9 +222,12 @@ bool verifyRollbackLater() { return true; }
 static void printStatus() {
   Serial.printf("SMS Gateway %s, id %s, key %s, up %lu s, free heap %u\n", FW_VERSION, deviceId().c_str(),
                 settings.keyFormatted().c_str(), (unsigned long)(millis() / 1000), ESP.getFreeHeap());
-  Serial.printf("Wi-Fi: %s %s, server %s: %s\n", settings.ssid.c_str(),
+  Serial.printf("Wi-Fi: %s %s, server %s: %s\n", WiFi.isConnected() ? WiFi.SSID().c_str() : "",
                 WiFi.isConnected() ? WiFi.localIP().toString().c_str() : "(not connected)", settings.server.c_str(),
                 cloud::online() ? "online" : cloud::lastError().c_str());
+  Serial.print("saved Wi-Fi networks:");
+  for (const WifiNet &n : settings.nets) Serial.printf(" \"%s\"", n.ssid.c_str());
+  Serial.println();
   if (cloud::notAdded()) Serial.printf("-> add this gateway in the panel under Devices with key %s\n", settings.keyFormatted().c_str());
   for (Modem *m : {&modem1, &modem2}) {
     Serial.printf("SIM%u: %s, SIM %s, operator %s, CSQ %d, reg %d, %d mV, IMEI %s, queue %u\n", m->slot,
@@ -276,7 +359,7 @@ void loop() {
   if (settings.configured()) {
     watchWifi();
     if (wifiUp()) cloud::loop();
-    if (cloud::setupRequested()) portal::start(true);
+    if (cloud::setupRequested()) portal::startLan();  // from the panel: only on the gateway's Wi-Fi
     if (cloud::rebootRequested()) {
       Serial.println("restart asked from the panel");
       delay(200);

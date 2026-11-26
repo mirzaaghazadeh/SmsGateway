@@ -30,6 +30,10 @@ details{font-size:.88rem;color:var(--muted)}summary{cursor:pointer;padding:4px 0
 .key input{font:600 1.2rem/1 ui-monospace,"SF Mono",Menlo,monospace;letter-spacing:.04em;text-align:center}
 .key button{min-height:44px}.key .hint{margin-top:8px}
 details .link{display:block;margin-top:10px}
+#saved{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:8px}
+#saved li{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;font-weight:400;color:var(--ink)}
+#saved li+li{border-top:1px solid var(--line)}#saved li span{flex:1;overflow-wrap:anywhere}
+#saved .now{font-size:.75rem;color:var(--accent);font-weight:600}
 </style></head><body>
 <header><h1>SMS Gateway setup</h1><p id="dev">&nbsp;</p></header>
 <main>
@@ -39,10 +43,14 @@ details .link{display:block;margin-top:10px}
  <p class="hint" id="khint">Add this key in your panel: Devices, then Add a gateway. It is also on the gateway screen.</p>
 </section>
 <form id="f" autocomplete="off">
- <label>Wi-Fi network
-  <span class="row"><select id="net"><option value="">Searching for networks…</option></select>
+ <div id="savedBox" class="hide"><label id="sh">Saved Wi-Fi networks</label>
+  <ul id="saved" aria-labelledby="sh"></ul>
+  <span class="hint">The gateway joins whichever of these is in range. It keeps up to 5.</span>
+ </div>
+ <label>Add a Wi-Fi network
+  <span class="row"><select id="net"><option value="">Searching for networks…</option><option value="__other">Other network…</option></select>
   <button type="button" class="link" id="again">Scan again</button></span>
-  <input id="ssid" class="hide" placeholder="Network name">
+  <input id="ssid" class="hide" placeholder="Network name" maxlength="32">
  </label>
  <label>Wi-Fi password
   <input id="pass" type="password" autocomplete="new-password">
@@ -56,7 +64,7 @@ details .link{display:block;margin-top:10px}
  <details><summary>Advanced</summary>
   <label class="check"><input type="checkbox" id="insecure"> Skip the HTTPS certificate check (only for a self-signed certificate)</label>
   <button type="button" class="link" id="newkey">Make a new device key</button>
-  <span class="hint">Only when the gateway gets a new owner: the old key stops working in the panel.</span>
+  <span class="hint" id="newkeyhint">Only when the gateway gets a new owner: the old key stops working in the panel.</span>
  </details>
  <div id="msg" role="status"></div>
  <button id="save">Save and connect</button>
@@ -66,23 +74,51 @@ details .link{display:block;margin-top:10px}
 const $=id=>document.getElementById(id);
 let info={};
 function msg(t,bad){const m=$('msg');m.textContent=t;m.className=bad?'bad':'';m.style.display=t?'block':'none'}
+const saved=()=>info.nets||[];
 async function scan(again){
   const sel=$('net');
-  for(let i=0;i<20;i++){
+  if(sel.options[0].value===''||again)sel.options[0].textContent='Searching for networks…';
+  for(let i=0;i<60;i++){
     const r=await fetch('/scan'+(again&&i===0?'?again=1':'')).then(r=>r.json()).catch(()=>({scanning:true}));
     if(!r.scanning){
-      const cur=sel.value||info.ssid||'';
+      const cur=sel.value&&sel.value!==''?sel.value:'';
       sel.replaceChildren();
-      for(const n of r.networks){const o=new Option(n.ssid+'  ('+n.rssi+' dBm'+(n.lock?'':', open')+')',n.ssid);sel.add(o)}
-      if(info.ssid&&!r.networks.some(n=>n.ssid===info.ssid))sel.add(new Option(info.ssid+'  (saved, not seen)',info.ssid));
+      for(const n of r.networks){
+        const tag=saved().includes(n.ssid)?', saved':'';
+        sel.add(new Option(n.ssid+'  ('+n.rssi+' dBm'+(n.lock?'':', open')+tag+')',n.ssid));
+      }
       sel.add(new Option('Other network…','__other'));
-      sel.value=cur||(r.networks[0]?r.networks[0].ssid:'__other');
+      const first=r.networks.find(n=>!saved().includes(n.ssid));
+      sel.value=cur&&[...sel.options].some(o=>o.value===cur)?cur:(first?first.ssid:(r.networks[0]?r.networks[0].ssid:'__other'));
       sel.onchange();return;
     }
     await new Promise(r=>setTimeout(r,1000));
   }
+  sel.options[0].textContent='No networks found: press Scan again, or choose Other network';
 }
-$('net').onchange=()=>$('ssid').classList.toggle('hide',$('net').value!=='__other');
+function drawSaved(){
+  const ul=$('saved');ul.replaceChildren();
+  $('savedBox').classList.toggle('hide',!saved().length);
+  for(const s of saved()){
+    const li=document.createElement('li');const name=document.createElement('span');name.textContent=s;li.append(name);
+    const inUse=info.connected&&s===info.ssid;
+    if(inUse){const b=document.createElement('span');b.className='now';b.textContent='in use';li.append(b)}
+    if(saved().length>1&&!inUse){
+      const x=document.createElement('button');x.type='button';x.className='link';x.textContent='Remove';
+      x.onclick=async()=>{
+        if(!confirm('Forget '+s+'?'))return;
+        const r=await fetch('/forget',{method:'POST',body:new URLSearchParams({ssid:s})}).then(r=>r.json()).catch(()=>null);
+        if(r&&r.ok){info.nets=saved().filter(n=>n!==s);drawSaved();sel_pass()}else msg(r?r.error:'The gateway did not answer.',true);
+      };
+      li.append(x);
+    }
+    ul.append(li);
+  }
+}
+function chosen(){return $('net').value==='__other'?$('ssid').value.trim():$('net').value}
+function sel_pass(){$('pass').placeholder=saved().includes(chosen())?'saved (leave empty to keep)':''}
+$('net').onchange=()=>{$('ssid').classList.toggle('hide',$('net').value!=='__other');sel_pass()};
+$('ssid').oninput=sel_pass;
 $('again').onclick=()=>scan(true);
 $('show').onchange=e=>$('pass').type=e.target.checked?'text':'password';
 $('copy').onclick=async()=>{
@@ -100,24 +136,36 @@ $('newkey').onclick=async()=>{
 fetch('/info').then(r=>r.json()).then(d=>{
   info=d;$('dev').textContent='ID '+d.id+' · firmware '+d.fw;$('key').value=d.key;
   $('server').value=d.server||'';$('name').value=d.name||'';$('insecure').checked=!!d.insecure;
-  if(d.hasPass)$('pass').placeholder='saved (leave empty to keep)';
+  if(d.mode==='lan'){ // opened on the gateway's Wi-Fi: others on it must not read or change the key
+    $('copy').classList.add('hide');$('newkey').classList.add('hide');$('newkeyhint').classList.add('hide');
+    $('khint').textContent='Only the end of the key is shown here. The whole key is on the gateway screen and its own setup hotspot.';
+    $('save').textContent='Save';
+  }
+  drawSaved();
   scan(false);
 });
 $('f').onsubmit=async e=>{
   e.preventDefault();
-  const ssid=$('net').value==='__other'?$('ssid').value.trim():$('net').value;
+  const ssid=chosen();
+  if(!ssid){msg('Choose a Wi-Fi network, or type its name under Other network.',true);return}
   const body=new URLSearchParams({ssid,pass:$('pass').value,server:$('server').value.trim(),name:$('name').value.trim(),insecure:$('insecure').checked?'1':'0'});
   $('save').disabled=true;msg('Saving…');
   try{
     const r=await fetch('/save',{method:'POST',body}).then(r=>r.json());
     if(!r.ok){msg(r.error,true);$('save').disabled=false;return}
+    if(r.kept){ // on the Wi-Fi: saved, the gateway stays connected
+      const rest=saved().filter(n=>n!==ssid&&n!==info.ssid);
+      info.nets=(info.connected&&ssid!==info.ssid?[info.ssid,ssid,...rest]:[ssid,...rest]).slice(0,5);drawSaved();sel_pass();$('pass').value='';
+      msg('Saved. The gateway stays on '+info.ssid+' and joins '+ssid+' when that one is in range.');
+      $('save').disabled=false;return;
+    }
     msg('Connecting to '+ssid+'…');
     for(let i=0;i<40;i++){
       await new Promise(r=>setTimeout(r,1000));
       const s=await fetch('/status').then(r=>r.json()).catch(()=>null);
       if(!s)continue;
-      if(s.state==='connected'){msg('Connected to '+ssid+' (address '+s.ip+'). Last step: in your panel open Devices and add the key '+$('key').value+'. The gateway restarts now; you can leave this Wi-Fi.');return}
-      if(s.state==='failed'){msg('Could not join '+ssid+'. Check the password and try again.',true);$('save').disabled=false;return}
+      if(s.state==='connected'){msg('Connected to '+ssid+' (address '+s.ip+'). If this gateway is not in your panel yet, open Devices there and add the key '+$('key').value+'. The gateway restarts now; you can leave this Wi-Fi.');return}
+      if(s.state==='failed'){msg('Could not join '+ssid+' (it is saved anyway). If it is in range, check the password and save again.',true);$('save').disabled=false;return}
     }
     msg('No answer. If the gateway screen shows your Wi-Fi, it worked; otherwise join this hotspot again.',true);
   }catch(err){msg('The gateway did not answer: '+err.message,true)}

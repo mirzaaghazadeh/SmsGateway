@@ -720,6 +720,40 @@ test('roaming mode: calls ring and the SIM sends no SMS, on demand or only while
   await panel('PUT', '/api/settings', { call_mode: before });
 });
 
+test('saved Wi-Fi networks: the gateway reports them, the panel adds and removes them, no password stays', async () => {
+  const jobs = '/api/devices/aabbccddeeff/jobs';
+  await device(status()); // firmware 1.0.0 knows one Wi-Fi only
+  assert.equal((await panel('POST', jobs, { type: 'wifi', op: 'add', ssid: 'Office', pass: 'office-pass-1' })).status, 409);
+
+  const v15 = (ev = [], saved = ['Home', 'Cafe']) => device({ ...status(ev), fw: '1.5.0', wifi: { ...status().wifi, saved } });
+  await v15();
+  assert.deepEqual((await panel('GET', '/api/devices')).body.gateways[0].wifi_saved, ['Home', 'Cafe']);
+  assert.equal((await panel('POST', jobs, { type: 'wifi', op: 'add', ssid: 'Office', pass: 'short' })).status, 400);
+  assert.equal((await panel('POST', jobs, { type: 'wifi', op: 'rename', ssid: 'Office' })).status, 400);
+  assert.equal((await panel('POST', jobs, { type: 'wifi', op: 'add', ssid: '', pass: 'office-pass-1' })).status, 400);
+
+  const j = await panel('POST', jobs, { type: 'wifi', op: 'add', ssid: 'Office', pass: 'office-pass-1' });
+  assert.equal(j.status, 200);
+  assert.ok(!j.body.payload.includes('office-pass-1')); // never shown back in the panel
+  let s = await v15();
+  const sent = s.body.jobs.find((x) => x.type === 'wifi');
+  assert.deepEqual(sent, { id: j.body.id, type: 'wifi', slot: 0, op: 'add', ssid: 'Office', pass: 'office-pass-1' });
+  await v15([{ seq: ++seq, t: 'job', job: sent.id, ok: true, ref: 'saved Wi-Fi networks: Home, Office, Cafe' }], ['Home', 'Office', 'Cafe']);
+  const done = await panel('GET', `/api/jobs/${sent.id}`);
+  assert.deepEqual([done.body.status, done.body.result], ['done', 'saved Wi-Fi networks: Home, Office, Cafe']);
+  assert.deepEqual((await panel('GET', '/api/devices')).body.gateways[0].wifi_saved, ['Home', 'Office', 'Cafe']);
+  const db = new DatabaseSync(join(dir, 'gateway.db')); // the password is gone from the server
+  db.exec('PRAGMA busy_timeout = 5000');
+  assert.deepEqual(JSON.parse(db.prepare('SELECT payload FROM jobs WHERE id = ?').get(sent.id).payload), { op: 'add', ssid: 'Office' });
+  db.close();
+
+  const r = await panel('POST', jobs, { type: 'wifi', op: 'remove', ssid: 'Cafe' });
+  s = await v15([], ['Home', 'Office', 'Cafe']);
+  assert.deepEqual(s.body.jobs.find((x) => x.type === 'wifi'), { id: r.body.id, type: 'wifi', slot: 0, op: 'remove', ssid: 'Cafe' });
+  await v15([{ seq: ++seq, t: 'job', job: r.body.id, ok: true, ref: 'saved Wi-Fi networks: Home, Office' }], ['Home', 'Office']);
+  assert.deepEqual((await panel('GET', '/api/devices')).body.gateways[0].wifi_saved, ['Home', 'Office']);
+});
+
 test('a reading of 0 from the gateway (none yet) is stored as missing', async () => {
   const s = status();
   s.wifi.rssi = 0;

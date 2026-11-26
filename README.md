@@ -127,7 +127,7 @@ pick-and-place file, assembly drawing and order specs. For bare boards, upload
 | v2 PCB | Designed, design check clean (clearances, connections), order files ready. Updated after the first build with a fixed 4.0 V regulator for the SIM800Ls. **Not yet ordered or built** |
 | v2 case | Designed, collision-checked against models of the boards. **Not yet printed** |
 | Firmware | Runs on real hardware: setup hotspot, pairing, server sync, updates over Wi-Fi, a SIM800L registered on the network. Bench-test sketch included |
-| Server | Web panel, HTTP API, webhooks, Telegram, firmware updates from GitHub releases, 45 passing tests. Runs with a real gateway |
+| Server | Web panel, HTTP API, webhooks, Telegram, firmware updates from GitHub releases, 46 passing tests. Runs with a real gateway |
 
 ## Repository layout
 
@@ -295,6 +295,10 @@ Full guide: [firmware/sms_gateway/README.md](firmware/sms_gateway/README.md).
 - **First setup**: the gateway opens a `SMS-Gateway-XXXX` hotspot (password `smsgateway`). Join it
   with your phone, choose your Wi-Fi and enter your server address. The page and the OLED show the
   gateway's own **device key**: add it in the panel under Devices → Add a gateway.
+- **Up to 5 Wi-Fi networks**: the gateway joins whichever saved network is in range. Add them on the
+  setup page, or from the panel (Devices → Wi-Fi networks) before you move the gateway.
+- **No open hotspot once set up**: change settings from the panel (Devices → Open settings page:
+  the page opens on the gateway's own Wi-Fi only) or press BOOT briefly on the gateway.
 - **Hold BOOT for 5 s** to erase the Wi-Fi and server settings and open the setup hotspot again
   (the device key stays, so the panel keeps knowing the gateway).
 

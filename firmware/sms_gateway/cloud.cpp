@@ -129,9 +129,36 @@ static void handleJob(JsonObject j) {
   } else if (!strcmp(type, "reboot")) {
     evJob(id, true, "restarting the gateway");
     reboot = true;
-  } else if (!strcmp(type, "setup")) {
-    evJob(id, true, "setup hotspot opened");
+  } else if (!strcmp(type, "setup")) {  // 1.5.0: the settings page on the Wi-Fi, no hotspot
+    evJob(id, true, "settings page open for 10 minutes at http://" + WiFi.localIP().toString() + " (only on the gateway's Wi-Fi)");
     setup = true;
+  } else if (!strcmp(type, "wifi")) {  // 1.5.0: add or forget a saved Wi-Fi network from the panel
+    String op = j["op"] | "";
+    String ssid = j["ssid"] | "";
+    String pass = j["pass"] | "";
+    String now = WiFi.SSID();
+    if (!ssid.length() || ssid.length() > 32) return evJob(id, false, "a Wi-Fi name has 1 to 32 characters");
+    if (op == "add") {
+      if (pass.length() > 63 || (pass.length() && pass.length() < 8)) return evJob(id, false, "a Wi-Fi password has 8 to 63 characters");
+      settings.addNet(ssid, pass);
+      // the network in use stays first: a restart (or older firmware after a rollback) tries it first
+      if (WiFi.isConnected() && now != ssid && settings.findNet(now)) settings.useFirst(now);
+      settings.save();
+    } else if (op == "remove") {
+      if (!settings.findNet(ssid)) return evJob(id, false, "this network is not saved");
+      if (settings.nets.size() <= 1) return evJob(id, false, "the gateway needs at least one saved Wi-Fi");
+      if (WiFi.isConnected() && now == ssid) return evJob(id, false, "the gateway is using this Wi-Fi right now");
+      settings.removeNet(ssid);
+      settings.save();
+    } else {
+      return evJob(id, false, "unknown Wi-Fi change");
+    }
+    String names;
+    for (const WifiNet &n : settings.nets) {
+      if (names.length()) names += ", ";
+      names += n.ssid;
+    }
+    evJob(id, true, "saved Wi-Fi networks: " + names);
   } else {
     evJob(id, false, String("unknown job type ") + type);
   }
@@ -153,6 +180,8 @@ static bool sync() {
   w["ssid"] = WiFi.SSID();
   w["rssi"] = WiFi.RSSI();
   w["ip"] = WiFi.localIP().toString();
+  JsonArray known = w["saved"].to<JsonArray>();  // 1.5.0: names of the saved networks, no passwords
+  for (const WifiNet &n : settings.nets) known.add(n.ssid);
 
   JsonArray sims = doc["sims"].to<JsonArray>();
   for (Modem *m : {&modem1, &modem2}) {

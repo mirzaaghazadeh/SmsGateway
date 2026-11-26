@@ -63,6 +63,7 @@ function gatewayList(now = Date.now()) {
         connected: !!d,
         online: !!d && now - d.last_seen < ONLINE_MS,
         lines: d ? linesFor(d.id, lines) : null,   // name, on/off and network of SIM 1 and 2
+        wifi_saved: d?.wifi_saved ? JSON.parse(d.wifi_saved) : null, // its saved Wi-Fi networks (1.5.0), names only
         sims: !d ? [] : sims
           .filter((s) => s.device_id === d.id)
           .map((s) => ({
@@ -373,8 +374,8 @@ router.post('/api/devices', panel(async (req) => {
   return gatewayList().find((g) => g.key_id === keyId);
 }));
 router.post('/api/devices/:id/jobs', panel(async (req) => {
-  const { type, slot, cmd, code } = await readJson(req);
-  return createJob(req.params.id, { type, slot, cmd, code });
+  const { type, slot, cmd, code, op, ssid, pass } = await readJson(req);
+  return createJob(req.params.id, { type, slot, cmd, code, op, ssid, pass });
 }));
 // Remove a gateway: its key stops working at once. Messages and calls stay.
 router.delete('/api/devices/key/:kid', panel((req) => {

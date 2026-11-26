@@ -120,6 +120,7 @@ addColumns('devices', [
   ['fw_offered', 'TEXT'],                          // firmware version last offered to this gateway
   ['fw_offered_at', 'INTEGER'],
   ['fw_result', 'TEXT'],                           // what the last update attempt said
+  ['wifi_saved', 'TEXT'],                          // firmware 1.5.0: names of its saved Wi-Fi networks (JSON)
 ]);
 addColumns('messages', [['tg_chat', 'TEXT']]);    // outgoing SMS sent from Telegram: tell this chat how it went
 addColumns('sims', [

@@ -61,11 +61,12 @@ export default function devices(page) {
     clear(listBox, gateways.map((g) => gatewayPanel(g, refresh, r.firmware)));
     // SIM card settings: redraw only when they change, and never while you type in them
     const connected = gateways.filter((g) => g.connected);
-    const sig = JSON.stringify([connected.map((g) => [g.id, g.name, g.fw, g.online, g.lines, g.sims.map((x) => [x.slot, x.operator, x.reg, x.roaming_mode, x.balance, x.balance_at])]),
+    const sig = JSON.stringify([connected.map((g) => [g.id, g.name, g.fw, g.online, g.lines, g.ssid, g.wifi_saved,
+      g.sims.map((x) => [x.slot, x.operator, x.reg, x.roaming_mode, x.balance, x.balance_at])]),
       [...scans.entries()]]);
     if (sig !== simsSig && !simsBox.contains(document.activeElement)) {
       simsSig = sig;
-      clear(simsBox, connected.map((g) => simsPanel(g, scans, () => refresh())));
+      clear(simsBox, connected.flatMap((g) => [simsPanel(g, scans, () => refresh()), wifiPanel(g, () => refresh())]));
     }
     if (gateways.some((g) => g.connected) && !consoleBuilt) {
       consoleBuilt = true;
@@ -381,7 +382,8 @@ function firmwareLine(g, latest, refresh) {
 }
 
 function gatewayPanel(g, refresh, latestFw) {
-  const act = (label, iconName, body, confirmText) =>
+  // showResult: the toast shows what the gateway answered (the address of its settings page)
+  const act = (label, iconName, body, confirmText, showResult = false) =>
     h('button', {
       class: 'btn', type: 'button', disabled: !g.online,
       onclick: async (e) => {
@@ -389,7 +391,7 @@ function gatewayPanel(g, refresh, latestFw) {
         await busy(e.currentTarget, async () => {
           try {
             toast('Sent to the gateway');
-            await runJob(g.id, body, (j) => toast(j.status === 'done' ? `${label}: done` : `${label}: ${j.result || j.status}`, j.status === 'done' ? '' : 'bad'));
+            await runJob(g.id, body, (j) => toast(j.status === 'done' ? (showResult && j.result ? j.result : `${label}: done`) : `${label}: ${j.result || j.status}`, j.status === 'done' ? '' : 'bad'));
           } catch (ex) {
             toast(ex.message, 'bad');
           }
@@ -420,21 +422,88 @@ function gatewayPanel(g, refresh, latestFw) {
       h('dl', { class: 'kv' },
         h('dt', {}, 'Key'), h('dd', { class: 'mono' }, `…${g.hint}`),
         h('dt', {}, 'Added'), h('dd', {}, shortTime(g.added_at)),
-        g.connected ? [h('dt', {}, 'ID'), h('dd', { class: 'mono' }, g.id), h('dt', {}, 'Firmware'), firmwareLine(g, latestFw, refresh)] : null
+        g.connected ? [h('dt', {}, 'ID'), h('dd', { class: 'mono' }, g.id), h('dt', {}, 'Firmware'), firmwareLine(g, latestFw, refresh)] : null,
+        g.connected && g.ssid ? [h('dt', {}, 'Wi-Fi'), h('dd', {}, g.ssid, g.ip ? h('span', { class: 'muted' }, ` · address ${g.ip}`) : '')] : null
       ),
       g.connected
         ? h('div', { class: 'row' },
             act('Restart gateway', 'power', { type: 'reboot' }, 'Restart the ESP32? SMS sending pauses for about 30 seconds.'),
             act('Restart SIM 1 module', 'refresh', { type: 'modem_reset', slot: 1 }, null),
             act('Restart SIM 2 module', 'refresh', { type: 'modem_reset', slot: 2 }, null),
-            act('Open Wi-Fi setup', 'hotspot', { type: 'setup' },
-              'Open the setup hotspot? The gateway stays online and also starts the "SMS-Gateway-…" Wi-Fi so you can change its settings from a phone.'),
+            newer(g.fw, '1.4.9')
+              ? act('Open settings page', 'hotspot', { type: 'setup' },
+                `Open the gateway's settings page for 10 minutes? Only devices on its Wi-Fi${g.ssid ? ` (${g.ssid})` : ''} can reach it, at http://${g.ip || 'its address'}. No hotspot is opened.`, true)
+              : act('Open Wi-Fi setup', 'hotspot', { type: 'setup' },
+                'Open the setup hotspot? The gateway stays online and also starts the "SMS-Gateway-…" Wi-Fi so you can change its settings from a phone.'),
             remove)
         : h('div', { class: 'row' },
             h('p', { class: 'muted small grow' }, 'Finish the setup on the gateway (Wi-Fi and server address). It turns online here a few seconds later.'),
             remove)
     )
   );
+}
+
+// Saved Wi-Fi networks of one gateway (firmware 1.5.0): it joins whichever is in range. Add the Wi-Fi
+// of the next place before moving the gateway there.
+function wifiPanel(g, refresh) {
+  const ok = newer(g.fw, '1.4.9');
+  const saved = g.wifi_saved || (g.ssid ? [g.ssid] : []);
+  const change = (body, done) => runJob(g.id, { type: 'wifi', ...body }, (j) => {
+    toast(j.status === 'done' ? done : (j.result || j.status), j.status === 'done' ? '' : 'bad');
+    refresh();
+  }, 60_000);
+
+  const rows = saved.map((name) => {
+    const inUse = g.online && name === g.ssid;
+    const remove = h('button', {
+      class: 'btn sm', type: 'button', disabled: !ok || !g.online || inUse || saved.length < 2,
+      title: inUse ? 'The gateway is using this Wi-Fi now' : saved.length < 2 ? 'The gateway needs at least one Wi-Fi' : 'Forget this Wi-Fi',
+      onclick: (e) => {
+        if (!confirm(`Forget "${name}" on the gateway?`)) return;
+        busy(e.currentTarget, async () => {
+          try {
+            await change({ op: 'remove', ssid: name }, `"${name}" forgotten`);
+          } catch (ex) {
+            toast(ex.message, 'bad');
+          }
+        });
+      },
+    }, icon('trash'), 'Remove');
+    return h('tr', {},
+      h('td', {}, h('b', {}, name)),
+      h('td', {}, inUse ? h('span', { class: 'badge ok' }, 'In use') : h('span', { class: 'hint' }, 'Saved')),
+      h('td', { class: 'r' }, ok ? remove : null));
+  });
+
+  const ssid = h('input', { class: 'input', placeholder: 'Wi-Fi name', maxlength: 32, autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Wi-Fi name', style: { flex: '1 1 160px', width: 'auto' } });
+  const pass = h('input', { class: 'input', type: 'password', placeholder: 'Password', maxlength: 63, autocomplete: 'new-password', 'aria-label': 'Wi-Fi password', style: { flex: '1 1 160px', width: 'auto' } });
+  const add = h('button', { class: 'btn primary', type: 'submit', disabled: !ok || !g.online }, icon('plus'), 'Add');
+  const form = h('form', {
+    class: 'row',
+    onsubmit: (e) => {
+      e.preventDefault();
+      const name = ssid.value.trim();
+      if (!name) return toast('Enter the Wi-Fi name', 'bad');
+      busy(add, async () => {
+        try {
+          await change({ op: 'add', ssid: name, pass: pass.value }, `"${name}" saved on the gateway`);
+          ssid.value = '';
+          pass.value = '';
+        } catch (ex) {
+          toast(ex.message, 'bad');
+        }
+      });
+    },
+  }, ssid, pass, add);
+
+  return panel(`Wi-Fi networks · ${g.name}`, null, h('div', { class: 'panel-body form' },
+    saved.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table' }, h('tbody', {}, rows))) : null,
+    ok ? form : null,
+    h('p', { class: 'hint' },
+      'The gateway keeps up to 5 Wi-Fi networks and joins whichever is in range. Moving it? Add the Wi-Fi of the new place here first. ',
+      'The password goes to the gateway and is then erased from this server. You can also add networks on the gateway\'s setup page.'),
+    ok ? null : h('p', { class: 'note' }, icon('alert'), h('span', {}, `This gateway runs ${g.fw || 'old firmware'} and knows one Wi-Fi. Saved networks need firmware 1.5.0.`))
+  ));
 }
 
 function atConsole(getGateways) {

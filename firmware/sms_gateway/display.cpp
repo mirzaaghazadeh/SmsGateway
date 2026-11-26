@@ -82,7 +82,7 @@ static void simLine(int y, const Modem &m) {
 static void drawSetup() {
   bool wifiLost = settings.configured();
   oled.setCursor(0, 0);
-  oled.print(wifiLost ? "Wi-Fi not found. Join:" : "SETUP: join Wi-Fi");
+  oled.print(wifiLost ? "Setup hotspot, join:" : "SETUP: join Wi-Fi");
   oled.setCursor(0, 10);
   oled.print(portal::apName());
   oled.setCursor(0, 20);
@@ -92,9 +92,10 @@ static void drawSetup() {
   oled.drawFastHLine(0, 41, 128, SSD1306_WHITE);
   oled.setCursor(0, 45);
   if (wifiLost) {
-    oled.print("still retrying:");
+    oled.print("still looking for:");
     oled.setCursor(0, 55);
-    oled.print(settings.ssid.substring(0, 21));
+    if (settings.nets.size() > 1) oled.printf("%u saved networks", (unsigned)settings.nets.size());
+    else oled.print(settings.ssid.substring(0, 21));
   } else {
     oled.print("Device key:");
     oled.setCursor(0, 55);
@@ -132,7 +133,8 @@ static void drawStatus() {
   simLine(37, modem2);
   oled.drawFastHLine(0, 49, 128, SSD1306_WHITE);
   oled.setCursor(0, 54);
-  oled.printf("in %lu out %lu call %lu", (unsigned long)statIn, (unsigned long)statOut, (unsigned long)statCalls);
+  if (!WiFi.isConnected() && settings.configured()) oled.print("BOOT short: setup");  // no hotspot by itself
+  else oled.printf("in %lu out %lu call %lu", (unsigned long)statIn, (unsigned long)statOut, (unsigned long)statCalls);
 }
 
 void loop() {
@@ -151,7 +153,7 @@ void loop() {
     oled.print(left);
     oled.setTextSize(1);
     oled.setCursor(0, 54);
-    oled.print("release BOOT: cancel");
+    oled.print(held < SETUP_PRESS_MS && settings.configured() ? "let go: open setup" : "release BOOT: cancel");
   } else if ((int32_t)(now - noticeUntil) < 0) {
     oled.setCursor(0, 16);
     oled.print(n1);
@@ -161,11 +163,16 @@ void loop() {
     drawSetup();
   } else {
     drawStatus();
-    if (portal::active()) {  // hotspot open while online (asked from the panel)
+    if (portal::active()) {  // setup open while online: on the Wi-Fi address, or the hotspot
       oled.fillRect(0, 50, 128, 14, SSD1306_BLACK);
       oled.setCursor(0, 54);
-      oled.print("setup: ");
-      oled.print(portal::apName());
+      if (portal::lanMode()) {
+        oled.print("setup ");
+        oled.print(WiFi.localIP().toString());
+      } else {
+        oled.print("setup: ");
+        oled.print(portal::apName());
+      }
     }
   }
   oled.display();

@@ -145,6 +145,10 @@ export function handleSync(body, now = Date.now()) {
       log(`Firmware changed: ${dev.fw} -> ${body.fw}`, { device_id: id });
       db.prepare('UPDATE devices SET fw_result = ? WHERE id = ?').run(`running ${str(body.fw, 20)}`, id);
     }
+    if (Array.isArray(wifi.saved)) { // firmware 1.5.0: the names of its saved Wi-Fi networks
+      const names = wifi.saved.slice(0, 10).map((s) => str(s, 32)).filter(Boolean);
+      db.prepare('UPDATE devices SET wifi_saved = ? WHERE id = ?').run(JSON.stringify(names), id);
+    }
 
     const prevSims = new Map(db.prepare('SELECT * FROM sims WHERE device_id = ?').all(id).map((s) => [s.slot, s]));
     for (const s of sims) {
@@ -317,6 +321,7 @@ function jobResult(device, jobId, ok, ev) {
   let result = ok ? str(ev.out ?? (Array.isArray(ev.ref) ? 'ref ' + ev.ref.join(',') : ev.ref), 4000) : str(ev.err || ev.out || 'error', 4000);
   if (job.type === 'ussd') return ussdResult(job, ok, result, now);
   db.prepare('UPDATE jobs SET status = ?, result = ?, done_at = ? WHERE id = ?').run(ok ? 'done' : 'failed', result, now, jobId);
+  if (job.type === 'wifi') forgetWifiPasswords();
   if (job.type !== 'sms') return;
   const msg = db.prepare('SELECT * FROM messages WHERE id = ?').get(job.message_id);
   if (!msg || msg.status === 'sent') return;
@@ -370,7 +375,10 @@ function dispatch(device, free, now) {
   for (const j of jobs) {
     db.prepare("UPDATE jobs SET status = 'sent', assigned_at = ? WHERE id = ?").run(now, j.id);
     const p = JSON.parse(j.payload || '{}');
-    out.push({ id: j.id, type: j.type, slot: j.slot || 0, ...(p.cmd ? { cmd: p.cmd } : {}), ...(p.code ? { code: p.code } : {}) });
+    out.push({
+      id: j.id, type: j.type, slot: j.slot || 0, ...(p.cmd ? { cmd: p.cmd } : {}), ...(p.code ? { code: p.code } : {}),
+      ...(j.type === 'wifi' ? { op: p.op, ssid: p.ssid, ...(p.op === 'add' ? { pass: p.pass || '' } : {}) } : {}),
+    });
   }
   free -= out.length;
   if (free <= 0) return out;
@@ -424,10 +432,17 @@ function dispatch(device, free, now) {
 
 // ---------- device commands from the panel ----------
 
-const COMMANDS = ['at', 'reboot', 'modem_reset', 'setup', 'ussd'];
+const COMMANDS = ['at', 'reboot', 'modem_reset', 'setup', 'ussd', 'wifi'];
+export const WIFI_FW = '1.5.0'; // first firmware with a list of saved Wi-Fi networks
+
+// A Wi-Fi password is kept only until the gateway has it: then it is erased from the job.
+export function forgetWifiPasswords() {
+  db.prepare("UPDATE jobs SET payload = json_remove(payload, '$.pass') WHERE type = 'wifi' AND status NOT IN ('queued', 'sent') AND json_extract(payload, '$.pass') IS NOT NULL").run();
+}
 
 // ussd: code (default: the balance code of the line); tg = Telegram chat that asked, auto = scheduled
-export function createJob(device, { type, slot, cmd, code, tg = null, auto = false }) {
+// wifi: op "add" (ssid, pass) or "remove" (ssid)
+export function createJob(device, { type, slot, cmd, code, tg = null, auto = false, op, ssid, pass }) {
   if (!COMMANDS.includes(type)) throw new HttpError(400, 'Unknown command');
   const d = db.prepare('SELECT fw FROM devices WHERE id = ?').get(device);
   if (!d) throw new HttpError(404, 'Device not found');
@@ -446,6 +461,20 @@ export function createJob(device, { type, slot, cmd, code, tg = null, auto = fal
     if (newer(USSD_FW, d.fw)) throw new HttpError(409, `Balance checks need firmware ${USSD_FW} or newer on the gateway. Update it under Devices.`);
     payload = { code, ...(tg ? { tg: String(tg) } : {}), ...(auto ? { auto: true } : {}) };
   }
+  if (type === 'wifi') {
+    if (newer(WIFI_FW, d.fw)) throw new HttpError(409, `Saved Wi-Fi networks need firmware ${WIFI_FW} or newer on the gateway. Update it first.`);
+    ssid = String(ssid ?? '').trim();
+    pass = String(pass ?? '');
+    if (!ssid || ssid.length > 32) throw new HttpError(400, 'A Wi-Fi name has 1 to 32 characters');
+    if (op === 'add') {
+      if (pass.length > 63 || (pass.length && pass.length < 8)) throw new HttpError(400, 'A Wi-Fi password has 8 to 63 characters (empty for an open network)');
+      payload = { op, ssid, pass };
+    } else if (op === 'remove') {
+      payload = { op, ssid };
+    } else {
+      throw new HttpError(400, 'op is "add" or "remove"');
+    }
+  }
   const r = db
     .prepare("INSERT INTO jobs (device_id, type, slot, payload, status, created_at) VALUES (?, ?, ?, ?, 'queued', ?)")
     .run(device, type, slot, JSON.stringify(payload), Date.now());
@@ -453,7 +482,13 @@ export function createJob(device, { type, slot, cmd, code, tg = null, auto = fal
 }
 
 export function getJob(id) {
-  return db.prepare('SELECT id, device_id, type, slot, payload, status, result, created_at, assigned_at, done_at FROM jobs WHERE id = ?').get(id) || null;
+  const j = db.prepare('SELECT id, device_id, type, slot, payload, status, result, created_at, assigned_at, done_at FROM jobs WHERE id = ?').get(id);
+  if (j?.type === 'wifi') { // never show a Wi-Fi password back
+    const p = JSON.parse(j.payload || '{}');
+    delete p.pass;
+    j.payload = JSON.stringify(p);
+  }
+  return j || null;
 }
 
 // ---------- maintenance (every 30 s) ----------
@@ -505,6 +540,7 @@ export function maintenance(now = Date.now()) {
       }
     }
     db.prepare("UPDATE jobs SET status = 'failed', result = 'Gateway was offline', done_at = ? WHERE status = 'queued' AND created_at < ?").run(now, now - 10 * 60_000);
+    forgetWifiPasswords(); // of Wi-Fi jobs that were answered, lost or never picked up
     for (const m of db.prepare("SELECT * FROM messages WHERE direction = 'out' AND status = 'queued' AND created_at < ?").all(now - 86400_000)) {
       db.prepare("UPDATE messages SET status = 'failed', error = ? WHERE id = ?").run(m.error || 'Not sent within 24 h (no SIM ready)', m.id);
       emit('sms.failed', { id: m.id, to: m.number, text: m.text, error: 'Not sent within 24 h' });
